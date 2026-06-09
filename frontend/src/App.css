@@ -39,6 +39,28 @@ h1 {
   line-height: 1.5;
 }
 
+.backend-status {
+  width: fit-content;
+  margin: 24px auto 0;
+  padding: 8px 12px;
+  color: #b7c1c8;
+  font-size: 0.85rem;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.backend-status--online {
+  color: #7dded7;
+  border-color: rgba(125, 222, 215, 0.28);
+}
+
+.backend-status--offline {
+  color: #ff9c8b;
+  border-color: rgba(255, 156, 139, 0.28);
+}
+
 .feature-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
