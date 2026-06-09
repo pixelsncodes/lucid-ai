@@ -97,6 +97,113 @@ h1 {
   font-weight: 700;
 }
 
+.chat-panel {
+  margin: 28px auto 0;
+  padding: 18px;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.2);
+}
+
+.chat-area {
+  min-height: 180px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 4px 4px 16px;
+}
+
+.chat-empty {
+  margin: auto;
+  color: #7f8b93;
+  font-size: 0.95rem;
+}
+
+.chat-message {
+  max-width: min(78%, 640px);
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.chat-message--user {
+  align-self: flex-end;
+  border-color: rgba(125, 222, 215, 0.22);
+  background: rgba(125, 222, 215, 0.1);
+}
+
+.chat-message--assistant {
+  align-self: flex-start;
+}
+
+.chat-role {
+  display: block;
+  margin-bottom: 6px;
+  color: #7dded7;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.chat-message p {
+  margin: 0;
+  color: #f7f7f2;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-form input,
+.chat-form button {
+  min-height: 46px;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.chat-form input {
+  width: 100%;
+  padding: 0 14px;
+  color: #f7f7f2;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(5, 8, 12, 0.72);
+}
+
+.chat-form input::placeholder {
+  color: #7f8b93;
+}
+
+.chat-form input:focus {
+  outline: 2px solid rgba(125, 222, 215, 0.36);
+  outline-offset: 2px;
+}
+
+.chat-form button {
+  padding: 0 18px;
+  color: #071012;
+  font-weight: 800;
+  border: 0;
+  background: #7dded7;
+  cursor: pointer;
+}
+
+.chat-form button:disabled {
+  color: #516064;
+  background: #2d3a3d;
+  cursor: not-allowed;
+}
+
 @media (max-width: 720px) {
   .landing {
     padding: 36px 16px;
@@ -109,5 +216,17 @@ h1 {
 
   .feature-card {
     min-height: 112px;
+  }
+
+  .chat-panel {
+    padding: 14px;
+  }
+
+  .chat-message {
+    max-width: 92%;
+  }
+
+  .chat-form {
+    grid-template-columns: 1fr;
   }
 }
