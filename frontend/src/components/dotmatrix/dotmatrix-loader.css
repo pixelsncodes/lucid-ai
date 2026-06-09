@@ -1,0 +1,96 @@
+.dotmatrix-loader {
+  --dotmatrix-columns: 8;
+  --dotmatrix-rows: 8;
+  --dotmatrix-size: 8px;
+  --dotmatrix-gap: 4px;
+  --dotmatrix-color: currentColor;
+  --dotmatrix-inactive-color: currentColor;
+  --dotmatrix-speed: 1s;
+
+  display: inline-grid;
+  grid-template-columns: repeat(var(--dotmatrix-columns), var(--dotmatrix-size));
+  grid-template-rows: repeat(var(--dotmatrix-rows), var(--dotmatrix-size));
+  gap: var(--dotmatrix-gap);
+  width: max-content;
+  height: max-content;
+  color: var(--dotmatrix-color);
+  line-height: 0;
+  vertical-align: middle;
+}
+
+.dotmatrix-loader__dot {
+  width: var(--dotmatrix-size);
+  height: var(--dotmatrix-size);
+  background: var(--dotmatrix-color);
+  opacity: 0.28;
+  transform: scale(0.72);
+  animation-duration: var(--dotmatrix-speed);
+  animation-delay: var(--dotmatrix-delay);
+  animation-iteration-count: infinite;
+  animation-timing-function: ease-in-out;
+  animation-fill-mode: both;
+}
+
+.dotmatrix-loader--square .dotmatrix-loader__dot {
+  border-radius: 2px;
+}
+
+.dotmatrix-loader--circle .dotmatrix-loader__dot {
+  border-radius: 999px;
+}
+
+.dotmatrix-loader--pulse .dotmatrix-loader__dot {
+  animation-name: dotmatrix-pulse;
+}
+
+.dotmatrix-loader--wave .dotmatrix-loader__dot {
+  animation-name: dotmatrix-wave;
+}
+
+.dotmatrix-loader--blink .dotmatrix-loader__dot {
+  animation-name: dotmatrix-blink;
+}
+
+.dotmatrix-loader--reduced-motion .dotmatrix-loader__dot {
+  animation: none;
+  opacity: 0.72;
+  transform: none;
+}
+
+@keyframes dotmatrix-pulse {
+  0%,
+  100% {
+    opacity: 0.24;
+    transform: scale(0.72);
+  }
+
+  45%,
+  55% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes dotmatrix-wave {
+  0%,
+  100% {
+    opacity: 0.24;
+    transform: translateY(0) scale(0.72);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(calc(var(--dotmatrix-size) * -0.35)) scale(1);
+  }
+}
+
+@keyframes dotmatrix-blink {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
