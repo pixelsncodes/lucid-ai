@@ -39,6 +39,7 @@ function App() {
   const [modelStatus, setModelStatus] = useState('loading')
   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
   const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX)
+  const [speakingMessageIndexes, setSpeakingMessageIndexes] = useState(() => new Set())
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const mediaStreamRef = useRef(null)
@@ -276,6 +277,64 @@ function App() {
     await sendChatMessage(message)
   }
 
+  const handleSpeakMessage = async (chatMessage, index) => {
+    if (!chatMessage.text.trim() || speakingMessageIndexes.has(index)) {
+      return
+    }
+
+    setSpeakingMessageIndexes((currentIndexes) => new Set(currentIndexes).add(index))
+
+    let audioUrl = ''
+    let hasCleanedUp = false
+    const cleanupSpeakMessage = () => {
+      if (hasCleanedUp) {
+        return
+      }
+
+      hasCleanedUp = true
+
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl)
+      }
+
+      setSpeakingMessageIndexes((currentIndexes) => {
+        const nextIndexes = new Set(currentIndexes)
+        nextIndexes.delete(index)
+        return nextIndexes
+      })
+    }
+
+    try {
+      const response = await fetch('http://localhost:8000/tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text: chatMessage.text }),
+      })
+
+      if (!response.ok) {
+        throw new Error('TTS request failed')
+      }
+
+      const audioBlob = await response.blob()
+      audioUrl = URL.createObjectURL(audioBlob)
+      const audio = new Audio(audioUrl)
+
+      audio.addEventListener('ended', cleanupSpeakMessage, { once: true })
+      audio.addEventListener('error', cleanupSpeakMessage, { once: true })
+      try {
+        await audio.play()
+      } catch (error) {
+        cleanupSpeakMessage()
+        throw error
+      }
+    } catch {
+      cleanupSpeakMessage()
+      // TTS playback is manually requested, so failures should not affect chat behavior.
+    }
+  }
+
   return (
     <main className="landing">
       <section className="hero" aria-labelledby="lucid-title">
@@ -361,7 +420,20 @@ function App() {
             ) : (
               chatMessages.map((chatMessage, index) => (
                 <div className={`chat-message chat-message--${chatMessage.role}`} key={`${chatMessage.role}-${index}`}>
-                  <span className="chat-role">{chatMessage.role === 'user' ? 'You' : 'LUCID'}</span>
+                  <div className="chat-message-header">
+                    <span className="chat-role">{chatMessage.role === 'user' ? 'You' : 'LUCID'}</span>
+                    {chatMessage.role === 'assistant' ? (
+                      <button
+                        type="button"
+                        className="speak-button"
+                        onClick={() => handleSpeakMessage(chatMessage, index)}
+                        disabled={speakingMessageIndexes.has(index)}
+                        aria-label="Speak assistant message"
+                      >
+                        {speakingMessageIndexes.has(index) ? 'Loading' : 'Speak'}
+                      </button>
+                    ) : null}
+                  </div>
                   <p>{chatMessage.text}</p>
                 </div>
               ))

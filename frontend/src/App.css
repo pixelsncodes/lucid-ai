@@ -192,13 +192,40 @@ h1 {
   align-self: flex-start;
 }
 
+.chat-message-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
 .chat-role {
   display: block;
-  margin-bottom: 6px;
   color: #7dded7;
   font-size: 0.72rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.speak-button {
+  min-height: 28px;
+  padding: 0 10px;
+  color: #7dded7;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  border: 1px solid rgba(125, 222, 215, 0.26);
+  border-radius: 8px;
+  background: rgba(125, 222, 215, 0.08);
+  cursor: pointer;
+}
+
+.speak-button:disabled {
+  color: #7f8b93;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+  cursor: not-allowed;
 }
 
 .chat-message p {
