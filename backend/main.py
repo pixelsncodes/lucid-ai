@@ -1,6 +1,10 @@
+import ctypes
+import site
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Literal, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import requests
@@ -11,6 +15,10 @@ from config import (
     OLLAMA_BASE_URL,
     OLLAMA_CHAT_ENDPOINT,
     OLLAMA_MODEL,
+    STT_COMPUTE_TYPE,
+    STT_DEVICE,
+    STT_LANGUAGE,
+    STT_MODEL,
     SYSTEM_PROMPT,
 )
 
@@ -115,6 +123,67 @@ def get_models():
             "default_model": OLLAMA_MODEL,
             "models": [],
         }
+
+
+
+def load_cuda_libraries():
+    for base in site.getsitepackages():
+        for lib_dir in (
+            Path(base) / "nvidia" / "cublas" / "lib",
+            Path(base) / "nvidia" / "cudnn" / "lib",
+        ):
+            if lib_dir.exists():
+                for lib in sorted(lib_dir.glob("*.so*")):
+                    try:
+                        ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
+                    except OSError:
+                        pass
+
+_stt_model = None
+
+
+def get_stt_model():
+    global _stt_model
+
+    if _stt_model is None:
+        load_cuda_libraries()
+
+        from faster_whisper import WhisperModel
+
+        _stt_model = WhisperModel(
+            STT_MODEL,
+            device=STT_DEVICE,
+            compute_type=STT_COMPUTE_TYPE,
+        )
+
+    return _stt_model
+
+
+@app.post("/stt")
+async def speech_to_text(audio: UploadFile = File(...)):
+    if not audio.content_type or not audio.content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be an audio file.")
+
+    suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
+    audio_bytes = await audio.read()
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
+
+    with NamedTemporaryFile(delete=True, suffix=suffix) as temp_audio:
+        temp_audio.write(audio_bytes)
+        temp_audio.flush()
+
+        model = get_stt_model()
+        segments, _info = model.transcribe(
+            temp_audio.name,
+            language=STT_LANGUAGE,
+            beam_size=5,
+        )
+
+        text = " ".join(segment.text.strip() for segment in segments).strip()
+
+    return {"text": text}
 
 
 @app.post("/chat")

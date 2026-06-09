@@ -4,6 +4,11 @@ OLLAMA_MODEL = "llama3.2:3b"
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_NUM_CTX = 4096
 
+STT_MODEL = "small"
+STT_DEVICE = "cuda"
+STT_COMPUTE_TYPE = "float16"
+STT_LANGUAGE = "en"
+
 SYSTEM_PROMPT = (
     "You are LUCID, the Local Unified Conversational Intelligence Desk. "
     "You are a local-first AI assistant designed for offline conversation, "
