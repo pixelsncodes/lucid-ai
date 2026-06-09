@@ -109,7 +109,7 @@ h1 {
 
 .settings-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(130px, 0.36fr) minmax(130px, 0.36fr);
+  grid-template-columns: minmax(220px, 1fr) minmax(130px, 0.36fr) minmax(130px, 0.36fr) auto;
   gap: 12px;
   margin-bottom: 14px;
   padding-bottom: 14px;
@@ -156,6 +156,17 @@ h1 {
 .setting-field select:disabled {
   color: #7f8b93;
   cursor: not-allowed;
+}
+
+.setting-checkbox {
+  align-content: end;
+}
+
+.setting-checkbox input {
+  width: 18px;
+  min-height: 18px;
+  accent-color: #7dded7;
+  cursor: pointer;
 }
 
 .chat-area {

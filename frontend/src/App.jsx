@@ -39,6 +39,7 @@ function App() {
   const [modelStatus, setModelStatus] = useState('loading')
   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
   const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX)
+  const [autoSpeak, setAutoSpeak] = useState(false)
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState(null)
   const [speechStatus, setSpeechStatus] = useState(null)
   const mediaRecorderRef = useRef(null)
@@ -46,6 +47,9 @@ function App() {
   const mediaStreamRef = useRef(null)
   const recordingModeRef = useRef(null)
   const chatMessagesRef = useRef([])
+  const autoSpeakRef = useRef(false)
+  const nextChatMessageIdRef = useRef(1)
+  const autoSpokenMessageIdsRef = useRef(new Set())
   const activeSpeechRef = useRef(null)
 
   useEffect(() => {
@@ -94,6 +98,10 @@ function App() {
   useEffect(() => {
     chatMessagesRef.current = chatMessages
   }, [chatMessages])
+
+  useEffect(() => {
+    autoSpeakRef.current = autoSpeak
+  }, [autoSpeak])
 
   const sendChatMessage = async (
     text,
@@ -152,9 +160,16 @@ function App() {
       }
 
       const data = await response.json()
+      const assistantMessage = {
+        id: nextChatMessageIdRef.current++,
+        role: 'assistant',
+        text: data.reply || 'No reply received.',
+        autoSpeak: autoSpeakRef.current,
+      }
+
       setChatMessages((currentMessages) => [
         ...currentMessages,
-        { role: 'assistant', text: data.reply || 'No reply received.' },
+        assistantMessage,
       ])
     } catch {
       setChatMessages((currentMessages) => [
@@ -378,6 +393,22 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    const lastMessageIndex = chatMessages.length - 1
+    const lastMessage = chatMessages[lastMessageIndex]
+
+    if (
+      lastMessage?.role !== 'assistant' ||
+      !lastMessage.autoSpeak ||
+      autoSpokenMessageIdsRef.current.has(lastMessage.id)
+    ) {
+      return
+    }
+
+    autoSpokenMessageIdsRef.current.add(lastMessage.id)
+    handleSpeakMessage(lastMessage, lastMessageIndex)
+  }, [chatMessages])
+
   return (
     <main className="landing">
       <section className="hero" aria-labelledby="lucid-title">
@@ -453,6 +484,16 @@ function App() {
                 step="512"
                 value={numCtx}
                 onChange={(event) => setNumCtx(clampContextSize(event.target.value))}
+              />
+            </label>
+
+            <label className="setting-field setting-checkbox" htmlFor="auto-speak-input">
+              <span>Auto Speak</span>
+              <input
+                id="auto-speak-input"
+                type="checkbox"
+                checked={autoSpeak}
+                onChange={(event) => setAutoSpeak(event.target.checked)}
               />
             </label>
           </div>
