@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,8 +17,24 @@ from config import (
 app = FastAPI(title="LUCID Backend")
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value):
+        trimmed_content = value.strip()
+        if not trimmed_content:
+            raise ValueError("history content must not be empty")
+        if len(trimmed_content) > 2000:
+            raise ValueError("history content must be 2000 characters or fewer")
+        return trimmed_content
+
+
 class ChatRequest(BaseModel):
     message: str
+    history: list[ChatMessage] = Field(default_factory=list, max_length=12)
     model: Optional[str] = None
     temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, allow_inf_nan=False)
     num_ctx: int = Field(default=DEFAULT_NUM_CTX, ge=512, le=32000)
@@ -32,6 +48,11 @@ class ChatRequest(BaseModel):
         if len(trimmed_message) > 2000:
             raise ValueError("message must be 2000 characters or fewer")
         return trimmed_message
+
+    @field_validator("history", mode="before")
+    @classmethod
+    def default_history(cls, value):
+        return [] if value is None else value
 
     @field_validator("model")
     @classmethod
@@ -99,6 +120,20 @@ def get_models():
 @app.post("/chat")
 def chat(request: ChatRequest):
     selected_model = request.model or OLLAMA_MODEL
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT,
+        },
+        *[
+            {
+                "role": history_message.role,
+                "content": history_message.content,
+            }
+            for history_message in request.history
+        ],
+        {"role": "user", "content": request.message},
+    ]
 
     try:
         response = requests.post(
@@ -110,13 +145,7 @@ def chat(request: ChatRequest):
                     "temperature": request.temperature,
                     "num_ctx": request.num_ctx,
                 },
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": SYSTEM_PROMPT,
-                    },
-                    {"role": "user", "content": request.message},
-                ],
+                "messages": messages,
             },
             timeout=30,
         )
