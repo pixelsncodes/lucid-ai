@@ -109,7 +109,7 @@ h1 {
 
 .settings-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(130px, 0.36fr) minmax(130px, 0.36fr) auto;
+  grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(130px, 0.32fr)) minmax(90px, auto) minmax(150px, auto);
   gap: 12px;
   margin-bottom: 14px;
   padding-bottom: 14px;
@@ -167,6 +167,22 @@ h1 {
   min-height: 18px;
   accent-color: #7dded7;
   cursor: pointer;
+}
+
+.setting-checkbox input:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.conversation-helper {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  color: #d7efec;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  border: 1px solid rgba(125, 222, 215, 0.2);
+  border-radius: 8px;
+  background: rgba(125, 222, 215, 0.08);
 }
 
 .chat-area {
@@ -348,4 +364,10 @@ h1 {
   margin: 10px 0 0;
   color: #ff9c8b;
   font-size: 0.9rem;
+}
+
+@media (min-width: 721px) and (max-width: 900px) {
+  .settings-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
