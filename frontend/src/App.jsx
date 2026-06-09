@@ -8,6 +8,9 @@ function App() {
   const [message, setMessage] = useState('')
   const [chatMessages, setChatMessages] = useState([])
   const [isSending, setIsSending] = useState(false)
+  const [models, setModels] = useState([])
+  const [selectedModel, setSelectedModel] = useState('')
+  const [modelStatus, setModelStatus] = useState('loading')
 
   useEffect(() => {
     fetch('http://localhost:8000/health')
@@ -16,6 +19,30 @@ function App() {
       })
       .catch(() => {
         setBackendStatus('offline')
+      })
+  }, [])
+
+  useEffect(() => {
+    fetch('http://localhost:8000/models')
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Models request failed')
+        }
+
+        return response.json()
+      })
+      .then((data) => {
+        const availableModels = Array.isArray(data.models) ? data.models : []
+        const defaultModel = data.default_model || availableModels[0] || ''
+
+        setModels(availableModels)
+        setSelectedModel(defaultModel)
+        setModelStatus(availableModels.length > 0 ? 'ready' : 'empty')
+      })
+      .catch(() => {
+        setModels([])
+        setSelectedModel('')
+        setModelStatus('offline')
       })
   }, [])
 
@@ -38,7 +65,10 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: trimmedMessage }),
+        body: JSON.stringify({
+          message: trimmedMessage,
+          model: selectedModel,
+        }),
       })
 
       if (!response.ok) {
@@ -80,6 +110,28 @@ function App() {
         </div>
 
         <section className="chat-panel" aria-label="LUCID chat">
+          <div className="model-row">
+            <label htmlFor="model-select">Model</label>
+            <select
+              id="model-select"
+              value={selectedModel}
+              onChange={(event) => setSelectedModel(event.target.value)}
+              disabled={modelStatus !== 'ready'}
+            >
+              {models.length > 0 ? (
+                models.map((model) => (
+                  <option value={model} key={model}>
+                    {model}
+                  </option>
+                ))
+              ) : (
+                <option value="">
+                  {modelStatus === 'loading' ? 'Loading models' : 'No models found'}
+                </option>
+              )}
+            </select>
+          </div>
+
           <div className="chat-area" aria-live="polite">
             {chatMessages.length === 0 ? (
               <p className="chat-empty">Start a local conversation.</p>
