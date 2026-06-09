@@ -416,6 +416,16 @@ function App() {
     handleSpeakMessage(lastMessage, lastMessageIndex)
   }, [chatMessages])
 
+  const voiceStatusLabel = isRecording
+    ? 'Recording'
+    : isTranscribing
+      ? 'Transcribing'
+      : isSending
+        ? 'Thinking'
+        : speechStatus === 'playing' || speechStatus === 'loading'
+          ? 'Speaking'
+          : 'Idle'
+
   return (
     <main className="landing">
       <section className="hero" aria-labelledby="lucid-title">
@@ -521,6 +531,18 @@ function App() {
               Conversation Mode uses press-to-record, then Stop &amp; Send. It is not continuous listening yet.
             </div>
           ) : null}
+
+          <div className="voice-status" aria-live="polite">
+            <span
+              className={`voice-status-visual voice-status-visual--${voiceStatusLabel.toLowerCase()}`}
+              aria-hidden="true"
+            >
+              <span />
+              <span />
+              <span />
+            </span>
+            <span>{voiceStatusLabel}</span>
+          </div>
 
           <div className="chat-area" aria-live="polite">
             {chatMessages.length === 0 ? (
