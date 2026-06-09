@@ -8,6 +8,8 @@ const MIN_TEMPERATURE = 0
 const MAX_TEMPERATURE = 2
 const MIN_NUM_CTX = 512
 const MAX_NUM_CTX = 32000
+const MAX_HISTORY_MESSAGES = 12
+const MAX_HISTORY_CONTENT_LENGTH = 2000
 
 const clampFiniteNumber = (value, min, max, fallback) => {
   const nextValue = Number(value)
@@ -84,6 +86,14 @@ function App() {
       return
     }
 
+    const history = chatMessages
+      .filter((chatMessage) => ['user', 'assistant'].includes(chatMessage.role))
+      .map((chatMessage) => ({
+        role: chatMessage.role,
+        content: chatMessage.text.trim().slice(0, MAX_HISTORY_CONTENT_LENGTH),
+      }))
+      .filter((chatMessage) => chatMessage.content)
+      .slice(-MAX_HISTORY_MESSAGES)
     const userMessage = { role: 'user', text: trimmedMessage }
     setChatMessages((currentMessages) => [...currentMessages, userMessage])
     setMessage('')
@@ -97,6 +107,7 @@ function App() {
         },
         body: JSON.stringify({
           message: trimmedMessage,
+          history,
           model: trimmedModel,
           temperature: safeTemperature,
           num_ctx: safeNumCtx,
