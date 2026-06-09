@@ -107,17 +107,21 @@ h1 {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.2);
 }
 
-.model-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(130px, 0.36fr) minmax(130px, 0.36fr);
   gap: 12px;
   margin-bottom: 14px;
   padding-bottom: 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.model-row label {
+.setting-field {
+  display: grid;
+  gap: 7px;
+}
+
+.setting-field span {
   color: #7dded7;
   font-size: 0.74rem;
   font-weight: 800;
@@ -125,10 +129,12 @@ h1 {
   text-transform: uppercase;
 }
 
-.model-row select {
+.setting-field select,
+.setting-field input {
   min-height: 40px;
-  min-width: min(100%, 260px);
-  padding: 0 38px 0 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 12px;
   color: #f7f7f2;
   font: inherit;
   font-size: 0.92rem;
@@ -137,12 +143,17 @@ h1 {
   background: rgba(5, 8, 12, 0.72);
 }
 
-.model-row select:focus {
+.setting-field select {
+  padding-right: 38px;
+}
+
+.setting-field select:focus,
+.setting-field input:focus {
   outline: 2px solid rgba(125, 222, 215, 0.36);
   outline-offset: 2px;
 }
 
-.model-row select:disabled {
+.setting-field select:disabled {
   color: #7f8b93;
   cursor: not-allowed;
 }
@@ -262,13 +273,8 @@ h1 {
     padding: 14px;
   }
 
-  .model-row {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .model-row select {
-    width: 100%;
+  .settings-row {
+    grid-template-columns: 1fr;
   }
 
   .chat-message {

@@ -2,10 +2,17 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 import requests
 
-from config import OLLAMA_BASE_URL, OLLAMA_CHAT_ENDPOINT, OLLAMA_MODEL, SYSTEM_PROMPT
+from config import (
+    DEFAULT_NUM_CTX,
+    DEFAULT_TEMPERATURE,
+    OLLAMA_BASE_URL,
+    OLLAMA_CHAT_ENDPOINT,
+    OLLAMA_MODEL,
+    SYSTEM_PROMPT,
+)
 
 app = FastAPI(title="LUCID Backend")
 
@@ -13,6 +20,39 @@ app = FastAPI(title="LUCID Backend")
 class ChatRequest(BaseModel):
     message: str
     model: Optional[str] = None
+    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, allow_inf_nan=False)
+    num_ctx: int = Field(default=DEFAULT_NUM_CTX, ge=512, le=32000)
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, value):
+        trimmed_message = value.strip()
+        if not trimmed_message:
+            raise ValueError("message must not be empty")
+        if len(trimmed_message) > 2000:
+            raise ValueError("message must be 2000 characters or fewer")
+        return trimmed_message
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value):
+        if value is None:
+            return value
+
+        trimmed_model = value.strip()
+        if not trimmed_model:
+            raise ValueError("model must not be empty")
+        return trimmed_model
+
+    @field_validator("temperature", mode="before")
+    @classmethod
+    def default_temperature(cls, value):
+        return DEFAULT_TEMPERATURE if value is None else value
+
+    @field_validator("num_ctx", mode="before")
+    @classmethod
+    def default_num_ctx(cls, value):
+        return DEFAULT_NUM_CTX if value is None else value
 
 
 app.add_middleware(
@@ -66,6 +106,10 @@ def chat(request: ChatRequest):
             json={
                 "model": selected_model,
                 "stream": False,
+                "options": {
+                    "temperature": request.temperature,
+                    "num_ctx": request.num_ctx,
+                },
                 "messages": [
                     {
                         "role": "system",
