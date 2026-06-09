@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import requests
 
 app = FastAPI(title="LUCID Backend")
 
@@ -33,4 +34,24 @@ def health_check():
 
 @app.post("/chat")
 def chat(request: ChatRequest):
-    return {"reply": f"LUCID received: {request.message}"}
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/chat",
+            json={
+                "model": "llama3.2:3b",
+                "stream": False,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are LUCID, a helpful local assistant.",
+                    },
+                    {"role": "user", "content": request.message},
+                ],
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return {"reply": data["message"]["content"]}
+    except (requests.RequestException, KeyError, ValueError):
+        return {"reply": "LUCID could not reach the local model."}
