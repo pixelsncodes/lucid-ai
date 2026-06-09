@@ -9,6 +9,9 @@ STT_DEVICE = "cuda"
 STT_COMPUTE_TYPE = "float16"
 STT_LANGUAGE = "en"
 
+TTS_MODEL_PATH = "models/piper/en_US-lessac-medium.onnx"
+TTS_MAX_TEXT_LENGTH = 2000
+
 SYSTEM_PROMPT = (
     "You are LUCID, the Local Unified Conversational Intelligence Desk. "
     "You are a local-first AI assistant designed for offline conversation, "

@@ -1,10 +1,12 @@
 import ctypes
 import site
+import subprocess
+import sys
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import requests
@@ -20,6 +22,8 @@ from config import (
     STT_LANGUAGE,
     STT_MODEL,
     SYSTEM_PROMPT,
+    TTS_MAX_TEXT_LENGTH,
+    TTS_MODEL_PATH,
 )
 
 app = FastAPI(title="LUCID Backend")
@@ -82,6 +86,20 @@ class ChatRequest(BaseModel):
     @classmethod
     def default_num_ctx(cls, value):
         return DEFAULT_NUM_CTX if value is None else value
+
+
+class TTSRequest(BaseModel):
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value):
+        trimmed_text = value.strip()
+        if not trimmed_text:
+            raise ValueError("text must not be empty")
+        if len(trimmed_text) > TTS_MAX_TEXT_LENGTH:
+            raise ValueError(f"text must be {TTS_MAX_TEXT_LENGTH} characters or fewer")
+        return trimmed_text
 
 
 app.add_middleware(
@@ -184,6 +202,36 @@ async def speech_to_text(audio: UploadFile = File(...)):
         text = " ".join(segment.text.strip() for segment in segments).strip()
 
     return {"text": text}
+
+
+@app.post("/tts")
+def text_to_speech(request: TTSRequest):
+    model_path = Path(TTS_MODEL_PATH)
+    if not model_path.exists():
+        raise HTTPException(status_code=500, detail=f"TTS model file is missing: {TTS_MODEL_PATH}")
+
+    temp_wav_path = None
+    try:
+        with NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+            temp_wav_path = Path(temp_wav.name)
+
+        result = subprocess.run(
+            [sys.executable, "-m", "piper", "-m", TTS_MODEL_PATH, "-f", str(temp_wav_path)],
+            input=request.text,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            error = result.stderr.strip() or "Piper exited with a non-zero status."
+            raise HTTPException(status_code=500, detail=f"TTS generation failed: {error}")
+
+        wav_bytes = temp_wav_path.read_bytes()
+        return Response(content=wav_bytes, media_type="audio/wav")
+    finally:
+        if temp_wav_path is not None:
+            temp_wav_path.unlink(missing_ok=True)
 
 
 @app.post("/chat")
