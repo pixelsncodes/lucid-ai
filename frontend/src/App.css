@@ -231,6 +231,11 @@ h1 {
   background: rgba(5, 8, 12, 0.72);
 }
 
+.chat-actions {
+  display: flex;
+  gap: 10px;
+}
+
 .chat-form input::placeholder {
   color: #7f8b93;
 }
@@ -247,6 +252,12 @@ h1 {
   border: 0;
   background: #7dded7;
   cursor: pointer;
+}
+
+.chat-form .record-button {
+  color: #f7f7f2;
+  border: 1px solid rgba(125, 222, 215, 0.3);
+  background: rgba(125, 222, 215, 0.12);
 }
 
 .chat-form button:disabled {
@@ -284,4 +295,19 @@ h1 {
   .chat-form {
     grid-template-columns: 1fr;
   }
+
+  .chat-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .chat-actions button {
+    width: 100%;
+  }
+}
+
+.voice-error {
+  margin: 10px 0 0;
+  color: #ff9c8b;
+  font-size: 0.9rem;
 }
