@@ -1,7 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI(title="LUCID Backend")
+
+
+class ChatRequest(BaseModel):
+    message: str
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,3 +29,8 @@ def read_root():
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.post("/chat")
+def chat(request: ChatRequest):
+    return {"reply": f"LUCID received: {request.message}"}
