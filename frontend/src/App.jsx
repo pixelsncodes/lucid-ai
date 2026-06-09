@@ -2,6 +2,25 @@ import { useEffect, useState } from 'react'
 import './App.css'
 
 const features = ['Offline LLM', 'Voice Chat', 'Local RAG']
+const DEFAULT_TEMPERATURE = 0.7
+const DEFAULT_NUM_CTX = 4096
+const MIN_TEMPERATURE = 0
+const MAX_TEMPERATURE = 2
+const MIN_NUM_CTX = 512
+const MAX_NUM_CTX = 32000
+
+const clampFiniteNumber = (value, min, max, fallback) => {
+  const nextValue = Number(value)
+
+  if (!Number.isFinite(nextValue)) {
+    return fallback
+  }
+
+  return Math.min(max, Math.max(min, nextValue))
+}
+
+const clampContextSize = (value) =>
+  Math.round(clampFiniteNumber(value, MIN_NUM_CTX, MAX_NUM_CTX, DEFAULT_NUM_CTX))
 
 function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
@@ -11,6 +30,8 @@ function App() {
   const [models, setModels] = useState([])
   const [selectedModel, setSelectedModel] = useState('')
   const [modelStatus, setModelStatus] = useState('loading')
+  const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
+  const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX)
 
   useEffect(() => {
     fetch('http://localhost:8000/health')
@@ -50,7 +71,16 @@ function App() {
     event.preventDefault()
 
     const trimmedMessage = message.trim()
-    if (!trimmedMessage || isSending) {
+    const trimmedModel = selectedModel.trim()
+    const safeTemperature = clampFiniteNumber(
+      temperature,
+      MIN_TEMPERATURE,
+      MAX_TEMPERATURE,
+      DEFAULT_TEMPERATURE,
+    )
+    const safeNumCtx = clampContextSize(numCtx)
+
+    if (!trimmedMessage || !trimmedModel || isSending) {
       return
     }
 
@@ -67,7 +97,9 @@ function App() {
         },
         body: JSON.stringify({
           message: trimmedMessage,
-          model: selectedModel,
+          model: trimmedModel,
+          temperature: safeTemperature,
+          num_ctx: safeNumCtx,
         }),
       })
 
@@ -110,26 +142,63 @@ function App() {
         </div>
 
         <section className="chat-panel" aria-label="LUCID chat">
-          <div className="model-row">
-            <label htmlFor="model-select">Model</label>
-            <select
-              id="model-select"
-              value={selectedModel}
-              onChange={(event) => setSelectedModel(event.target.value)}
-              disabled={modelStatus !== 'ready'}
-            >
-              {models.length > 0 ? (
-                models.map((model) => (
-                  <option value={model} key={model}>
-                    {model}
+          <div className="settings-row">
+            <label className="setting-field" htmlFor="model-select">
+              <span>Model</span>
+              <select
+                id="model-select"
+                value={selectedModel}
+                onChange={(event) => setSelectedModel(event.target.value)}
+                disabled={modelStatus !== 'ready'}
+              >
+                {models.length > 0 ? (
+                  models.map((model) => (
+                    <option value={model} key={model}>
+                      {model}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">
+                    {modelStatus === 'loading' ? 'Loading models' : 'No models found'}
                   </option>
-                ))
-              ) : (
-                <option value="">
-                  {modelStatus === 'loading' ? 'Loading models' : 'No models found'}
-                </option>
-              )}
-            </select>
+                )}
+              </select>
+            </label>
+
+            <label className="setting-field" htmlFor="temperature-input">
+              <span>Temperature</span>
+              <input
+                id="temperature-input"
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                value={temperature}
+                onChange={(event) =>
+                  setTemperature(
+                    clampFiniteNumber(
+                      event.target.value,
+                      MIN_TEMPERATURE,
+                      MAX_TEMPERATURE,
+                      DEFAULT_TEMPERATURE,
+                    ),
+                  )
+                }
+              />
+            </label>
+
+            <label className="setting-field" htmlFor="context-input">
+              <span>Context</span>
+              <input
+                id="context-input"
+                type="number"
+                min="512"
+                max="32000"
+                step="512"
+                value={numCtx}
+                onChange={(event) => setNumCtx(clampContextSize(event.target.value))}
+              />
+            </label>
           </div>
 
           <div className="chat-area" aria-live="polite">
@@ -153,7 +222,7 @@ function App() {
               onChange={(event) => setMessage(event.target.value)}
               placeholder="Message LUCID"
             />
-            <button type="submit" disabled={isSending || !message.trim()}>
+            <button type="submit" disabled={isSending || !message.trim() || !selectedModel.trim()}>
               {isSending ? 'Sending' : 'Send'}
             </button>
           </form>
