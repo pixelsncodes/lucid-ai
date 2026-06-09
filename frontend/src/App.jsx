@@ -40,6 +40,7 @@ function App() {
   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
   const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX)
   const [autoSpeak, setAutoSpeak] = useState(false)
+  const [conversationMode, setConversationMode] = useState(false)
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState(null)
   const [speechStatus, setSpeechStatus] = useState(null)
   const mediaRecorderRef = useRef(null)
@@ -295,6 +296,12 @@ function App() {
     await sendChatMessage(message)
   }
 
+  const handleConversationModeChange = (enabled) => {
+    setConversationMode(enabled)
+    setAutoSpeak(enabled)
+    autoSpeakRef.current = enabled
+  }
+
   const stopActiveSpeech = () => {
     activeSpeechRef.current?.cleanup({ abortRequest: true, stopAudio: true })
   }
@@ -493,10 +500,27 @@ function App() {
                 id="auto-speak-input"
                 type="checkbox"
                 checked={autoSpeak}
+                disabled={conversationMode}
                 onChange={(event) => setAutoSpeak(event.target.checked)}
               />
             </label>
+
+            <label className="setting-field setting-checkbox" htmlFor="conversation-mode-input">
+              <span>Conversation Mode</span>
+              <input
+                id="conversation-mode-input"
+                type="checkbox"
+                checked={conversationMode}
+                onChange={(event) => handleConversationModeChange(event.target.checked)}
+              />
+            </label>
           </div>
+
+          {conversationMode ? (
+            <div className="conversation-helper" role="note">
+              Conversation Mode uses press-to-record, then Stop &amp; Send. It is not continuous listening yet.
+            </div>
+          ) : null}
 
           <div className="chat-area" aria-live="polite">
             {chatMessages.length === 0 ? (
@@ -568,11 +592,17 @@ function App() {
                 aria-label={isRecording && recordingMode === 'send' ? 'Stop and send voice' : 'Send voice'}
                 aria-pressed={isRecording && recordingMode === 'send'}
               >
-                {isTranscribing
-                  ? 'Transcribing'
-                  : isRecording && recordingMode === 'send'
-                    ? 'Stop & Send'
-                    : 'Send Voice'}
+                {conversationMode
+                  ? isTranscribing
+                    ? 'Transcribing'
+                    : isRecording && recordingMode === 'send'
+                      ? 'Stop & Send'
+                      : 'Start Conversation'
+                  : isTranscribing
+                    ? 'Transcribing'
+                    : isRecording && recordingMode === 'send'
+                      ? 'Stop & Send'
+                      : 'Send Voice'}
               </button>
               <button
                 type="submit"
