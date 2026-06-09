@@ -15,6 +15,7 @@ Current setup:
 - Frontend connects to backend health endpoint.
 - Frontend chat box sends messages to backend /chat.
 - Backend /chat calls local Ollama at http://localhost:11434/api/chat.
+- Backend model settings now live in backend/config.py.
 
 Run backend:
 cd ~/lucid-ai/backend
@@ -26,6 +27,5 @@ cd ~/lucid-ai/frontend
 npm run dev
 
 Current next task:
-- Create backend config.py for model settings.
-- Move hardcoded Ollama model and URL from main.py into config.py.
-- Later add model selection, local RAG, STT, and TTS.
+- Add model selection support.
+- Later add local RAG, STT, TTS, and optional controlled web search.
