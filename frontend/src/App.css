@@ -185,6 +185,82 @@ h1 {
   background: rgba(125, 222, 215, 0.08);
 }
 
+.voice-status {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 12px;
+  padding: 7px 10px;
+  color: #d7efec;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid rgba(125, 222, 215, 0.16);
+  border-radius: 8px;
+  background: rgba(5, 8, 12, 0.44);
+}
+
+.voice-status-visual {
+  width: 24px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.voice-status-visual span {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #7dded7;
+  box-shadow: 0 0 14px rgba(125, 222, 215, 0.5);
+}
+
+.voice-status-visual--idle span:not(:first-child),
+.voice-status-visual--recording span:not(:first-child) {
+  display: none;
+}
+
+.voice-status-visual--idle span:first-child {
+  background: #7f8b93;
+  box-shadow: none;
+}
+
+.voice-status-visual--recording span:first-child {
+  animation: voicePulse 1.15s ease-in-out infinite;
+}
+
+.voice-status-visual--transcribing span,
+.voice-status-visual--thinking span,
+.voice-status-visual--speaking span {
+  animation: voiceBars 1s ease-in-out infinite;
+}
+
+.voice-status-visual--transcribing span:nth-child(2),
+.voice-status-visual--thinking span:nth-child(2),
+.voice-status-visual--speaking span:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.voice-status-visual--transcribing span:nth-child(3),
+.voice-status-visual--thinking span:nth-child(3),
+.voice-status-visual--speaking span:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+.voice-status-visual--thinking span {
+  background: #b7c1c8;
+  box-shadow: 0 0 12px rgba(183, 193, 200, 0.4);
+}
+
+.voice-status-visual--speaking span {
+  background: #f7f7f2;
+  box-shadow: 0 0 12px rgba(247, 247, 242, 0.34);
+}
+
 .chat-area {
   min-height: 180px;
   max-height: 320px;
@@ -318,6 +394,34 @@ h1 {
   color: #516064;
   background: #2d3a3d;
   cursor: not-allowed;
+}
+
+@keyframes voicePulse {
+  0%,
+  100% {
+    transform: scale(0.82);
+    opacity: 0.72;
+    box-shadow: 0 0 10px rgba(125, 222, 215, 0.42);
+  }
+
+  50% {
+    transform: scale(1.28);
+    opacity: 1;
+    box-shadow: 0 0 20px rgba(125, 222, 215, 0.75);
+  }
+}
+
+@keyframes voiceBars {
+  0%,
+  100% {
+    transform: translateY(2px) scaleY(0.75);
+    opacity: 0.58;
+  }
+
+  50% {
+    transform: translateY(-2px) scaleY(1.45);
+    opacity: 1;
+  }
 }
 
 @media (max-width: 720px) {
