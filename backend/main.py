@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
 
+from config import OLLAMA_CHAT_ENDPOINT, OLLAMA_MODEL, SYSTEM_PROMPT
+
 app = FastAPI(title="LUCID Backend")
 
 
@@ -36,14 +38,14 @@ def health_check():
 def chat(request: ChatRequest):
     try:
         response = requests.post(
-            "http://localhost:11434/api/chat",
+            OLLAMA_CHAT_ENDPOINT,
             json={
-                "model": "llama3.2:3b",
+                "model": OLLAMA_MODEL,
                 "stream": False,
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are LUCID, a helpful local assistant.",
+                        "content": SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": request.message},
                 ],
