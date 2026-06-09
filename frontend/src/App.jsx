@@ -31,6 +31,7 @@ function App() {
   const [chatMessages, setChatMessages] = useState([])
   const [isSending, setIsSending] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
+  const [recordingMode, setRecordingMode] = useState(null)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [voiceError, setVoiceError] = useState('')
   const [models, setModels] = useState([])
@@ -41,6 +42,8 @@ function App() {
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const mediaStreamRef = useRef(null)
+  const recordingModeRef = useRef(null)
+  const chatMessagesRef = useRef([])
 
   useEffect(() => {
     fetch('http://localhost:8000/health')
@@ -84,101 +87,15 @@ function App() {
     [],
   )
 
-  const transcribeAudio = async (audioBlob) => {
-    setIsTranscribing(true)
-    setVoiceError('')
+  useEffect(() => {
+    chatMessagesRef.current = chatMessages
+  }, [chatMessages])
 
-    try {
-      const formData = new FormData()
-      formData.append('audio', audioBlob, 'recording.webm')
-
-      const response = await fetch('http://localhost:8000/stt', {
-        method: 'POST',
-        body: formData,
-      })
-
-      if (!response.ok) {
-        throw new Error('Transcription request failed')
-      }
-
-      const data = await response.json()
-      const transcript = data.text || data.transcript || ''
-
-      if (!transcript.trim()) {
-        throw new Error('No transcript returned')
-      }
-
-      setMessage(transcript)
-    } catch {
-      setVoiceError('Unable to transcribe audio.')
-    } finally {
-      setIsTranscribing(false)
-    }
-  }
-
-  const handleToggleRecording = async () => {
-    if (isTranscribing) {
-      return
-    }
-
-    if (isRecording) {
-      mediaRecorderRef.current?.stop()
-      return
-    }
-
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      setVoiceError('Audio recording is not supported in this browser.')
-      return
-    }
-
-    try {
-      setVoiceError('')
-      audioChunksRef.current = []
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mimeType = AUDIO_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) || ''
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
-
-      mediaStreamRef.current = stream
-      mediaRecorderRef.current = recorder
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data)
-        }
-      }
-
-      recorder.onstop = () => {
-        setIsRecording(false)
-        stream.getTracks().forEach((track) => track.stop())
-        mediaStreamRef.current = null
-
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: recorder.mimeType || mimeType || 'audio/webm',
-        })
-        audioChunksRef.current = []
-
-        if (audioBlob.size > 0) {
-          transcribeAudio(audioBlob)
-        } else {
-          setVoiceError('No audio was recorded.')
-        }
-      }
-
-      recorder.start()
-      setIsRecording(true)
-    } catch {
-      setIsRecording(false)
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
-      mediaStreamRef.current = null
-      setVoiceError('Unable to access the microphone.')
-    }
-  }
-
-  const handleSendMessage = async (event) => {
-    event.preventDefault()
-
-    const trimmedMessage = message.trim()
+  const sendChatMessage = async (
+    text,
+    { allowDuringTranscribe = false, allowDuringRecording = false } = {},
+  ) => {
+    const trimmedMessage = text.trim()
     const trimmedModel = selectedModel.trim()
     const safeTemperature = clampFiniteNumber(
       temperature,
@@ -188,11 +105,17 @@ function App() {
     )
     const safeNumCtx = clampContextSize(numCtx)
 
-    if (!trimmedMessage || !trimmedModel || isSending || isTranscribing) {
-      return
+    if (
+      !trimmedMessage ||
+      !trimmedModel ||
+      isSending ||
+      (isRecording && !allowDuringRecording) ||
+      (isTranscribing && !allowDuringTranscribe)
+    ) {
+      return false
     }
 
-    const history = chatMessages
+    const history = chatMessagesRef.current
       .filter((chatMessage) => ['user', 'assistant'].includes(chatMessage.role))
       .map((chatMessage) => ({
         role: chatMessage.role,
@@ -237,6 +160,120 @@ function App() {
     } finally {
       setIsSending(false)
     }
+
+    return true
+  }
+
+  const transcribeAudio = async (audioBlob, { autoSend = false } = {}) => {
+    setIsTranscribing(true)
+    setVoiceError('')
+
+    try {
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'recording.webm')
+
+      const response = await fetch('http://localhost:8000/stt', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error('Transcription request failed')
+      }
+
+      const data = await response.json()
+      const transcript = data.text || data.transcript || ''
+
+      if (!transcript.trim()) {
+        throw new Error('No transcript returned')
+      }
+
+      if (autoSend) {
+        await sendChatMessage(transcript, {
+          allowDuringTranscribe: true,
+          allowDuringRecording: true,
+        })
+      } else {
+        setMessage(transcript)
+      }
+    } catch {
+      setVoiceError('Unable to transcribe audio.')
+    } finally {
+      setIsTranscribing(false)
+    }
+  }
+
+  const handleToggleRecording = async (mode = 'draft') => {
+    if (isTranscribing || isSending || (mode === 'send' && !selectedModel.trim())) {
+      return
+    }
+
+    if (isRecording) {
+      if (recordingModeRef.current === mode) {
+        mediaRecorderRef.current?.stop()
+      }
+      return
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setVoiceError('Audio recording is not supported in this browser.')
+      return
+    }
+
+    try {
+      setVoiceError('')
+      audioChunksRef.current = []
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = AUDIO_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) || ''
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+
+      mediaStreamRef.current = stream
+      mediaRecorderRef.current = recorder
+      recordingModeRef.current = mode
+      setRecordingMode(mode)
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+
+      recorder.onstop = () => {
+        const stoppedMode = recordingModeRef.current
+        setIsRecording(false)
+        setRecordingMode(null)
+        recordingModeRef.current = null
+        stream.getTracks().forEach((track) => track.stop())
+        mediaStreamRef.current = null
+
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || mimeType || 'audio/webm',
+        })
+        audioChunksRef.current = []
+
+        if (audioBlob.size > 0) {
+          transcribeAudio(audioBlob, { autoSend: stoppedMode === 'send' })
+        } else {
+          setVoiceError('No audio was recorded.')
+        }
+      }
+
+      recorder.start()
+      setIsRecording(true)
+    } catch {
+      setIsRecording(false)
+      setRecordingMode(null)
+      recordingModeRef.current = null
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+      mediaStreamRef.current = null
+      setVoiceError('Unable to access the microphone.')
+    }
+  }
+
+  const handleSendMessage = async (event) => {
+    event.preventDefault()
+    await sendChatMessage(message)
   }
 
   return (
@@ -343,16 +380,39 @@ function App() {
               <button
                 type="button"
                 className="record-button"
-                onClick={handleToggleRecording}
-                disabled={isTranscribing}
+                onClick={() => handleToggleRecording('draft')}
+                disabled={isSending || isTranscribing || (isRecording && recordingMode !== 'draft')}
                 aria-label={isRecording ? 'Stop recording' : 'Record audio'}
-                aria-pressed={isRecording}
+                aria-pressed={isRecording && recordingMode === 'draft'}
               >
-                {isTranscribing ? 'Transcribing' : isRecording ? 'Stop' : 'Record'}
+                {isTranscribing
+                  ? 'Transcribing'
+                  : isRecording && recordingMode === 'draft'
+                    ? 'Stop'
+                    : 'Record'}
+              </button>
+              <button
+                type="button"
+                className="record-button"
+                onClick={() => handleToggleRecording('send')}
+                disabled={
+                  isSending ||
+                  isTranscribing ||
+                  !selectedModel.trim() ||
+                  (isRecording && recordingMode !== 'send')
+                }
+                aria-label={isRecording && recordingMode === 'send' ? 'Stop and send voice' : 'Send voice'}
+                aria-pressed={isRecording && recordingMode === 'send'}
+              >
+                {isTranscribing
+                  ? 'Transcribing'
+                  : isRecording && recordingMode === 'send'
+                    ? 'Stop & Send'
+                    : 'Send Voice'}
               </button>
               <button
                 type="submit"
-                disabled={isSending || isTranscribing || !message.trim() || !selectedModel.trim()}
+                disabled={isSending || isRecording || isTranscribing || !message.trim() || !selectedModel.trim()}
                 aria-label="Send message"
               >
                 {isSending ? 'Sending' : 'Send'}
