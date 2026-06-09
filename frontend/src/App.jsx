@@ -39,12 +39,14 @@ function App() {
   const [modelStatus, setModelStatus] = useState('loading')
   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
   const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX)
-  const [speakingMessageIndexes, setSpeakingMessageIndexes] = useState(() => new Set())
+  const [speakingMessageIndex, setSpeakingMessageIndex] = useState(null)
+  const [speechStatus, setSpeechStatus] = useState(null)
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const mediaStreamRef = useRef(null)
   const recordingModeRef = useRef(null)
   const chatMessagesRef = useRef([])
+  const activeSpeechRef = useRef(null)
 
   useEffect(() => {
     fetch('http://localhost:8000/health')
@@ -82,6 +84,7 @@ function App() {
 
   useEffect(
     () => () => {
+      activeSpeechRef.current?.cleanup({ abortRequest: true, stopAudio: true })
       mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop())
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
     },
@@ -277,31 +280,67 @@ function App() {
     await sendChatMessage(message)
   }
 
+  const stopActiveSpeech = () => {
+    activeSpeechRef.current?.cleanup({ abortRequest: true, stopAudio: true })
+  }
+
   const handleSpeakMessage = async (chatMessage, index) => {
-    if (!chatMessage.text.trim() || speakingMessageIndexes.has(index)) {
+    if (!chatMessage.text.trim()) {
       return
     }
 
-    setSpeakingMessageIndexes((currentIndexes) => new Set(currentIndexes).add(index))
+    if (activeSpeechRef.current?.index === index) {
+      stopActiveSpeech()
+      return
+    }
 
+    stopActiveSpeech()
+    setSpeakingMessageIndex(index)
+    setSpeechStatus('loading')
+
+    const controller = new AbortController()
+    let audio = null
     let audioUrl = ''
     let hasCleanedUp = false
-    const cleanupSpeakMessage = () => {
+    const cleanupSpeakMessage = ({ abortRequest = false, stopAudio = false } = {}) => {
       if (hasCleanedUp) {
         return
       }
 
       hasCleanedUp = true
 
+      if (abortRequest) {
+        controller.abort()
+      }
+
+      if (audio) {
+        audio.removeEventListener('ended', cleanupSpeakMessage)
+        audio.removeEventListener('error', cleanupSpeakMessage)
+
+        if (stopAudio) {
+          audio.pause()
+          audio.removeAttribute('src')
+          audio.load()
+        }
+      }
+
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl)
       }
 
-      setSpeakingMessageIndexes((currentIndexes) => {
-        const nextIndexes = new Set(currentIndexes)
-        nextIndexes.delete(index)
-        return nextIndexes
-      })
+      const isActiveSpeech = activeSpeechRef.current?.cleanup === cleanupSpeakMessage
+
+      if (isActiveSpeech) {
+        activeSpeechRef.current = null
+      }
+
+      setSpeakingMessageIndex((currentIndex) => (currentIndex === index ? null : currentIndex))
+      setSpeechStatus((currentStatus) => (isActiveSpeech ? null : currentStatus))
+    }
+
+    activeSpeechRef.current = {
+      index,
+      cleanup: cleanupSpeakMessage,
     }
 
     try {
@@ -311,6 +350,7 @@ function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ text: chatMessage.text }),
+        signal: controller.signal,
       })
 
       if (!response.ok) {
@@ -319,12 +359,15 @@ function App() {
 
       const audioBlob = await response.blob()
       audioUrl = URL.createObjectURL(audioBlob)
-      const audio = new Audio(audioUrl)
+      audio = new Audio(audioUrl)
 
       audio.addEventListener('ended', cleanupSpeakMessage, { once: true })
       audio.addEventListener('error', cleanupSpeakMessage, { once: true })
       try {
         await audio.play()
+        if (!hasCleanedUp && activeSpeechRef.current?.cleanup === cleanupSpeakMessage) {
+          setSpeechStatus('playing')
+        }
       } catch (error) {
         cleanupSpeakMessage()
         throw error
@@ -427,10 +470,18 @@ function App() {
                         type="button"
                         className="speak-button"
                         onClick={() => handleSpeakMessage(chatMessage, index)}
-                        disabled={speakingMessageIndexes.has(index)}
-                        aria-label="Speak assistant message"
+                        disabled={speakingMessageIndex === index && speechStatus === 'loading'}
+                        aria-label={
+                          speakingMessageIndex === index && speechStatus === 'playing'
+                            ? 'Stop assistant message playback'
+                            : 'Speak assistant message'
+                        }
                       >
-                        {speakingMessageIndexes.has(index) ? 'Loading' : 'Speak'}
+                        {speakingMessageIndex === index
+                          ? speechStatus === 'playing'
+                            ? 'Stop'
+                            : 'Loading'
+                          : 'Speak'}
                       </button>
                     ) : null}
                   </div>
