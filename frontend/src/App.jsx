@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import DotmCircular8 from './components/dotmatrix/DotmCircular8'
+import DotmSquare1 from './components/dotmatrix/DotmSquare1'
+import DotmSquare8 from './components/dotmatrix/DotmSquare8'
+import DotmSquare18 from './components/dotmatrix/DotmSquare18'
 
-const features = ['Offline LLM', 'Voice Chat', 'Local RAG']
 const DEFAULT_TEMPERATURE = 0.7
 const DEFAULT_NUM_CTX = 4096
 const MIN_TEMPERATURE = 0
@@ -10,6 +13,7 @@ const MIN_NUM_CTX = 512
 const MAX_NUM_CTX = 32000
 const MAX_HISTORY_MESSAGES = 12
 const MAX_HISTORY_CONTENT_LENGTH = 2000
+const MAX_RECORDING_SECONDS = 30
 const AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
 
 const clampFiniteNumber = (value, min, max, fallback) => {
@@ -39,19 +43,28 @@ function App() {
   const [modelStatus, setModelStatus] = useState('loading')
   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
   const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX)
-  const [autoSpeak, setAutoSpeak] = useState(false)
-  const [conversationMode, setConversationMode] = useState(false)
+  const [autoSpeak, setAutoSpeak] = useState(true)
+  const [conversationMode, setConversationMode] = useState(true)
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState(null)
   const [speechStatus, setSpeechStatus] = useState(null)
+  const [isChatOpen, setIsChatOpen] = useState(false)
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const mediaStreamRef = useRef(null)
   const recordingModeRef = useRef(null)
+  const recordingTimeoutRef = useRef(null)
   const chatMessagesRef = useRef([])
-  const autoSpeakRef = useRef(false)
+  const autoSpeakRef = useRef(true)
   const nextChatMessageIdRef = useRef(1)
   const autoSpokenMessageIdsRef = useRef(new Set())
   const activeSpeechRef = useRef(null)
+
+  const clearRecordingTimeout = () => {
+    if (recordingTimeoutRef.current) {
+      window.clearTimeout(recordingTimeoutRef.current)
+      recordingTimeoutRef.current = null
+    }
+  }
 
   useEffect(() => {
     fetch('http://localhost:8000/health')
@@ -89,6 +102,7 @@ function App() {
 
   useEffect(
     () => () => {
+      clearRecordingTimeout()
       activeSpeechRef.current?.cleanup({ abortRequest: true, stopAudio: true })
       mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop())
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
@@ -230,6 +244,7 @@ function App() {
 
     if (isRecording) {
       if (recordingModeRef.current === mode) {
+        clearRecordingTimeout()
         mediaRecorderRef.current?.stop()
       }
       return
@@ -261,6 +276,7 @@ function App() {
 
       recorder.onstop = () => {
         const stoppedMode = recordingModeRef.current
+        clearRecordingTimeout()
         setIsRecording(false)
         setRecordingMode(null)
         recordingModeRef.current = null
@@ -280,8 +296,14 @@ function App() {
       }
 
       recorder.start()
+      recordingTimeoutRef.current = window.setTimeout(() => {
+        if (recorder.state === 'recording') {
+          recorder.stop()
+        }
+      }, MAX_RECORDING_SECONDS * 1000)
       setIsRecording(true)
     } catch {
+      clearRecordingTimeout()
       setIsRecording(false)
       setRecordingMode(null)
       recordingModeRef.current = null
@@ -426,26 +448,86 @@ function App() {
           ? 'Speaking'
           : 'Idle'
 
-  return (
-    <main className="landing">
-      <section className="hero" aria-labelledby="lucid-title">
-        <p className="eyebrow">Private AI workspace</p>
-        <h1 id="lucid-title">LUCID</h1>
-        <p className="subtitle">Local Unified Conversational Intelligence Desk</p>
-        <p className={`backend-status backend-status--${backendStatus}`} aria-live="polite">
-          Backend: {backendStatus}
-        </p>
+  const VoiceLoader =
+    voiceStatusLabel === 'Recording'
+      ? DotmSquare18
+      : voiceStatusLabel === 'Transcribing' || voiceStatusLabel === 'Thinking'
+        ? DotmSquare8
+        : voiceStatusLabel === 'Speaking'
+          ? DotmCircular8
+          : DotmSquare1
+  const voiceStatusDetail = isRecording
+    ? `Listening · ${MAX_RECORDING_SECONDS}s max`
+    : isTranscribing
+      ? 'Transcribing voice'
+      : isSending
+        ? 'Thinking locally'
+        : speechStatus === 'playing' || speechStatus === 'loading'
+          ? 'Speaking response'
+          : selectedModel.trim()
+            ? 'Ready for voice'
+            : 'Select a model'
+  const isVoiceActionDisabled =
+    isSending ||
+    isTranscribing ||
+    !selectedModel.trim() ||
+    (isRecording && recordingMode !== 'send')
+  const voiceActionLabel = isTranscribing
+    ? 'Transcribing'
+    : isRecording && recordingMode === 'send'
+      ? 'Stop & Send'
+      : 'Speak'
 
-        <div className="feature-grid" aria-label="LUCID features">
-          {features.map((feature) => (
-            <article className="feature-card" key={feature}>
-              <span className="feature-dot" aria-hidden="true" />
-              <h2>{feature}</h2>
-            </article>
-          ))}
+  return (
+    <main className="lucid-shell">
+      <header className="lucid-topbar">
+        <div>
+          <h1 id="lucid-title" className="lucid-wordmark">LUCID</h1>
+          <p className="lucid-subtitle">Local Unified Conversational Intelligence Desk</p>
+        </div>
+        <div className="topbar-actions">
+          <p className={`backend-status backend-status--${backendStatus}`} aria-live="polite">
+            Backend: {backendStatus}
+          </p>
+          <button
+            type="button"
+            className="chat-toggle"
+            onClick={() => setIsChatOpen((currentValue) => !currentValue)}
+            aria-expanded={isChatOpen}
+            aria-controls="lucid-chat-panel"
+          >
+            {isChatOpen ? 'Hide Chat' : 'Chat'}
+          </button>
+        </div>
+      </header>
+
+      <section className="voice-stage" aria-labelledby="lucid-title">
+        <div className="voice-control">
+          <button
+            type="button"
+            className={`voice-button voice-button--${voiceStatusLabel.toLowerCase()}`}
+            onClick={() => handleToggleRecording('send')}
+            disabled={isVoiceActionDisabled}
+            aria-label={isRecording && recordingMode === 'send' ? 'Stop and send voice' : 'Record and send voice'}
+            aria-pressed={isRecording && recordingMode === 'send'}
+          >
+            <VoiceLoader
+              className="voice-loader"
+              color="currentColor"
+              dotSize={voiceStatusLabel === 'Idle' ? 14 : 12}
+              gap={voiceStatusLabel === 'Idle' ? 0 : 6}
+              speed={voiceStatusLabel === 'Recording' ? 0.82 : 1}
+              aria-label={voiceStatusLabel}
+            />
+          </button>
+          <div className="voice-copy" aria-live="polite">
+            <p className="voice-status-label">{voiceStatusLabel}</p>
+            <p className="voice-status-detail">{voiceStatusDetail}</p>
+            <p className="voice-action-label">{voiceActionLabel}</p>
+          </div>
         </div>
 
-        <section className="chat-panel" aria-label="LUCID chat">
+        <section className="settings-panel" aria-label="LUCID settings">
           <div className="settings-row">
             <label className="setting-field" htmlFor="model-select">
               <span>Model</span>
@@ -531,19 +613,14 @@ function App() {
               Conversation Mode uses press-to-record, then Stop &amp; Send. It is not continuous listening yet.
             </div>
           ) : null}
+        </section>
 
-          <div className="voice-status" aria-live="polite">
-            <span
-              className={`voice-status-visual voice-status-visual--${voiceStatusLabel.toLowerCase()}`}
-              aria-hidden="true"
-            >
-              <span />
-              <span />
-              <span />
-            </span>
-            <span>{voiceStatusLabel}</span>
-          </div>
-
+        <section
+          id="lucid-chat-panel"
+          className={`chat-panel ${isChatOpen ? 'chat-panel--open' : ''}`}
+          aria-label="LUCID chat"
+          hidden={!isChatOpen}
+        >
           <div className="chat-area" aria-live="polite">
             {chatMessages.length === 0 ? (
               <p className="chat-empty">Start a local conversation.</p>
@@ -614,16 +691,12 @@ function App() {
                 aria-label={isRecording && recordingMode === 'send' ? 'Stop and send voice' : 'Send voice'}
                 aria-pressed={isRecording && recordingMode === 'send'}
               >
-                {conversationMode
-                  ? isTranscribing
-                    ? 'Transcribing'
-                    : isRecording && recordingMode === 'send'
-                      ? 'Stop & Send'
-                      : 'Start Conversation'
-                  : isTranscribing
-                    ? 'Transcribing'
-                    : isRecording && recordingMode === 'send'
-                      ? 'Stop & Send'
+                {isTranscribing
+                  ? 'Transcribing'
+                  : isRecording && recordingMode === 'send'
+                    ? 'Stop & Send'
+                    : conversationMode
+                      ? 'Start Conversation'
                       : 'Send Voice'}
               </button>
               <button
@@ -635,12 +708,12 @@ function App() {
               </button>
             </div>
           </form>
-          {voiceError ? (
-            <p className="voice-error" role="alert">
-              {voiceError}
-            </p>
-          ) : null}
         </section>
+        {voiceError ? (
+          <p className="voice-error" role="alert">
+            {voiceError}
+          </p>
+        ) : null}
       </section>
     </main>
   )
