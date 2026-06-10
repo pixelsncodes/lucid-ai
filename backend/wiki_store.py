@@ -223,11 +223,15 @@ def build_fts_query(query: str) -> str:
 
 def query_terms(query: str) -> list[str]:
     terms = re.findall(r"[a-zA-Z0-9]+", query.lower())
-    return [
-        term
-        for term in terms
-        if len(term) > 1 and term not in FTS_STOP_WORDS
-    ]
+    normalized_terms = []
+    for term in terms:
+        if len(term) <= 1 or term in FTS_STOP_WORDS:
+            continue
+        if term == "birth":
+            term = "born"
+        if term not in normalized_terms:
+            normalized_terms.append(term)
+    return normalized_terms
 
 
 def normalized_phrase(value: str) -> str:

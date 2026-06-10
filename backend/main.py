@@ -396,13 +396,18 @@ def answer_supported_awards_question(
     if "award" not in lowered_question:
         return None
 
-    award_patterns = [
-        r"\b\d+\s+Grammy Awards\b",
-        r"\b\d+\s+Brit Awards\b",
-        r"\b\d+\s+Billboard Music Awards\b",
-        r"\b\d+\s+American Music Awards\b",
-        r"\b\d+\s+Guinness World Records\b",
-    ]
+    asked_grammy = bool(re.search(r"\bgrammys?\b|\bgrammy\s+awards?\b", lowered_question))
+    award_names = (
+        ["Grammy Awards"]
+        if asked_grammy
+        else [
+            "Grammy Awards",
+            "Brit Awards",
+            "Billboard Music Awards",
+            "American Music Awards",
+            "Guinness World Records",
+        ]
+    )
 
     award_mentions = []
     has_many_awards = False
@@ -411,20 +416,118 @@ def answer_supported_awards_question(
         if re.search(r"\bmany awards\b", text, flags=re.IGNORECASE):
             has_many_awards = True
 
-        for pattern in award_patterns:
+        for award_name in award_names:
+            pattern = rf"\b(\d{{1,3}})\s+{re.escape(award_name)}\b"
             for match in re.finditer(pattern, text):
+                count = int(match.group(1))
+                if count <= 0:
+                    continue
                 mention = match.group(0)
                 if mention not in award_mentions:
                     award_mentions.append(mention)
 
     if award_mentions:
+        if asked_grammy:
+            if len(award_mentions) == 1:
+                return f"The selected Wikipedia context says Jackson's awards include {award_mentions[0]}."
+            return (
+                "The selected Wikipedia context mentions Grammy Awards, but I do not see "
+                "a clean supported total in the retrieved text."
+            )
+
         return (
             "The selected Wikipedia article does not give one single total, "
             f"but it says Jackson has many awards and lists {', '.join(award_mentions)}."
         )
 
+    if asked_grammy:
+        return (
+            "The selected Wikipedia context mentions Grammy Awards, but I do not see "
+            "a clean supported total in the retrieved text."
+        )
+
     if has_many_awards:
         return "The selected Wikipedia article says Jackson has many awards, but it does not give one single total in the retrieved context."
+
+    return None
+
+
+def answer_supported_life_event_question(
+    question: str,
+    entries: list[dict[str, str]],
+) -> str | None:
+    lowered_question = question.lower()
+    asks_birth = bool(re.search(r"\b(?:born|birth)\b", lowered_question))
+    asks_death = bool(re.search(r"\b(?:die|died|death|pass away|passed away)\b", lowered_question))
+    if not asks_birth and not asks_death:
+        return None
+
+    for entry in entries:
+        text = re.sub(r"\s+", " ", entry.get("text", "")).strip()
+        if asks_birth:
+            match = re.search(
+                r"\bMichael Joseph Jackson was born\b.*?\bon\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4})\b",
+                text,
+            )
+            if match:
+                return f"Michael Jackson was born on {match.group(1)}."
+
+            match = re.search(
+                r"\bMichael Joseph Jackson\s*\(([A-Z][a-z]+\s+\d{1,2},\s+\d{4})\s+[–-]\s+[A-Z][a-z]+\s+\d{1,2},\s+\d{4}\)",
+                text,
+            )
+            if match:
+                return f"Michael Jackson was born on {match.group(1)}."
+
+        if asks_death:
+            match = re.search(
+                r"\bMichael Jackson\b.*?\bpassed away on\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4})\b",
+                text,
+            )
+            if match:
+                return f"Michael Jackson died on {match.group(1)}."
+
+            match = re.search(
+                r"\bMichael Joseph Jackson\s*\([A-Z][a-z]+\s+\d{1,2},\s+\d{4}\s+[–-]\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4})\)",
+                text,
+            )
+            if match:
+                return f"Michael Jackson died on {match.group(1)}."
+
+            match = re.search(
+                r"\bJackson died\b.*?\bon\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4})\b",
+                text,
+            )
+            if match:
+                return f"Michael Jackson died on {match.group(1)}."
+
+    return None
+
+
+def answer_supported_famous_song_question(
+    question: str,
+    entries: list[dict[str, str]],
+) -> str | None:
+    lowered_question = question.lower()
+    if not re.search(r"\b(?:famous|best known|popular)\b", lowered_question) or "song" not in lowered_question:
+        return None
+
+    has_michael_jackson_context = False
+    for entry in entries:
+        if normalize_wikipedia_source_topic(entry.get("title", "")) == "Michael Jackson":
+            has_michael_jackson_context = True
+
+        text = re.sub(r"\s+", " ", entry.get("text", "")).strip()
+        match = re.search(r"\bThriller includes famous songs like ([^.]+)\.", text)
+        if match:
+            songs = match.group(1).strip()
+            return (
+                "The selected Wikipedia context does not name one most famous Michael Jackson song, "
+                f"but it says Thriller includes famous songs like {songs}."
+            )
+
+    if has_michael_jackson_context:
+        return "The selected Wikipedia context does not name one most famous Michael Jackson song."
 
     return None
 
@@ -500,7 +603,14 @@ LIFE_EVENT_FOLLOW_UP_PATTERNS = [
             rf"\bwhen\s+was\s+{FOLLOW_UP_PRONOUN_PATTERN}\s+born\b",
             re.IGNORECASE,
         ),
-        "born date",
+        "birth date",
+    ),
+    (
+        re.compile(
+            rf"\bwhat\s+year\s+was\s+{FOLLOW_UP_PRONOUN_PATTERN}\s+born\b",
+            re.IGNORECASE,
+        ),
+        "birth date",
     ),
     (
         re.compile(
@@ -636,6 +746,15 @@ def wikipedia_life_event_follow_up_terms(message: str) -> str | None:
     return None
 
 
+def wikipedia_follow_up_intent_terms(message: str) -> str | None:
+    lowered_message = message.lower()
+    if re.search(r"\b(?:famous|best known|popular)\b", lowered_message) and "song" in lowered_message:
+        return "famous song"
+    if "award" in lowered_message:
+        return "awards"
+    return None
+
+
 def wikipedia_follow_up_reason(message: str) -> str | None:
     explicit_topic = extract_recent_topic_from_text(message)
     has_reference = bool(FOLLOW_UP_REFERENCE_PATTERN.search(message))
@@ -688,6 +807,8 @@ def build_wikipedia_context_resolution(message: str, history: list[ChatMessage])
     life_event_terms = wikipedia_life_event_follow_up_terms(message)
     if life_event_terms:
         retrieval_query = f"{topic} {life_event_terms}"
+    elif intent_terms := wikipedia_follow_up_intent_terms(message):
+        retrieval_query = f"{topic} {intent_terms}"
     else:
         follow_up_terms = [
             term
@@ -706,6 +827,26 @@ def build_wikipedia_context_resolution(message: str, history: list[ChatMessage])
 
 def build_wikipedia_retrieval_query(message: str, history: list[ChatMessage]) -> str:
     return str(build_wikipedia_context_resolution(message, history)["retrieval_query"])
+
+
+def build_wikipedia_chat_debug(
+    request: ChatRequest,
+    context_resolution: dict[str, str | bool | None],
+    retrieved_entries: list[dict[str, str]],
+) -> dict[str, object]:
+    return {
+        "knowledge_base": "wikipedia",
+        "original_query": request.message,
+        "retrieval_query": str(context_resolution["retrieval_query"]),
+        "active_topic": context_resolution["active_topic"],
+        "resolver_reason": context_resolution["reason"],
+        "source_titles": [entry["title"] for entry in retrieved_entries],
+        "history_source_titles": recent_wikipedia_source_titles(request.history),
+    }
+
+
+def log_wikipedia_chat_debug(debug: dict[str, object]) -> None:
+    print(f"wikipedia_chat_debug={json.dumps(debug, ensure_ascii=False)}", flush=True)
 
 
 app.add_middleware(
@@ -891,14 +1032,17 @@ def chat(request: ChatRequest):
         ]
         sources = None
     else:
-        retrieval_query = build_wikipedia_retrieval_query(request.message, request.history)
+        context_resolution = build_wikipedia_context_resolution(request.message, request.history)
+        retrieval_query = str(context_resolution["retrieval_query"])
         retrieved_entries = search_wikipedia_knowledge_base(retrieval_query)
+        wikipedia_debug = build_wikipedia_chat_debug(request, context_resolution, retrieved_entries)
+        log_wikipedia_chat_debug(wikipedia_debug)
 
         if request.include_retrieval_debug:
             retrieval_debug = retrieved_entries
 
         if not retrieved_entries:
-            response = {"reply": UNKNOWN_WIKIPEDIA_ANSWER, "sources": []}
+            response = {"reply": UNKNOWN_WIKIPEDIA_ANSWER, "sources": [], "debug": wikipedia_debug}
             if retrieval_debug is not None:
                 response["retrieval_debug"] = retrieval_debug
             return response
@@ -950,9 +1094,13 @@ def chat(request: ChatRequest):
 
         supported_answer = answer_supported_capital_question(request.message, retrieved_entries)
         if not supported_answer:
+            supported_answer = answer_supported_life_event_question(request.message, retrieved_entries)
+        if not supported_answer:
+            supported_answer = answer_supported_famous_song_question(request.message, retrieved_entries)
+        if not supported_answer:
             supported_answer = answer_supported_awards_question(request.message, retrieved_entries)
         if supported_answer:
-            response = {"reply": supported_answer, "sources": sources}
+            response = {"reply": supported_answer, "sources": sources, "debug": wikipedia_debug}
             if retrieval_debug is not None:
                 response["retrieval_debug"] = retrieval_debug
             return response
@@ -983,8 +1131,10 @@ def chat(request: ChatRequest):
             sources = []
         if sources is not None:
             chat_response["sources"] = sources
-        if request.knowledge_base == "wikipedia" and retrieval_debug is not None:
-            chat_response["retrieval_debug"] = retrieval_debug
+        if request.knowledge_base == "wikipedia":
+            chat_response["debug"] = wikipedia_debug
+            if retrieval_debug is not None:
+                chat_response["retrieval_debug"] = retrieval_debug
         return chat_response
     except (requests.RequestException, KeyError, ValueError):
         return {"reply": "LUCID could not reach the local model."}

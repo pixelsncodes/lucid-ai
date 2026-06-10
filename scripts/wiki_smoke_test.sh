@@ -49,6 +49,39 @@ curl_json() {
   fi
 }
 
+build_michael_jackson_followup_body() {
+  local intro_json=$1
+  local followup_message=$2
+
+  JSON_PAYLOAD="$intro_json" FOLLOWUP_MESSAGE="$followup_message" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["JSON_PAYLOAD"])
+source_titles = [
+    source.get("title")
+    for source in payload.get("sources", [])
+    if isinstance(source, dict) and source.get("title")
+]
+if not source_titles:
+    source_titles = ["Michael Jackson"]
+
+body = {
+    "message": os.environ["FOLLOWUP_MESSAGE"],
+    "knowledge_base": "wikipedia",
+    "history": [
+        {"role": "user", "content": "What can you tell me about Michael Jackson?"},
+        {
+            "role": "assistant",
+            "content": payload.get("reply", "Michael Joseph Jackson was an American singer, songwriter, dancer, and philanthropist."),
+            "source_titles": source_titles[:5],
+        },
+    ],
+}
+print(json.dumps(body, separators=(",", ":")))
+PY
+}
+
 run_json_check() {
   local label=$1
   local json=$2
@@ -99,10 +132,32 @@ elif check == "chat_michael_jackson_awards":
     reply = payload.get("reply", "")
     sources = payload.get("sources")
     source_text = json.dumps(sources, ensure_ascii=False).lower()
+    debug = payload.get("debug", {})
     ok = (
         isinstance(reply, str)
         and "award" in reply.lower()
         and "michael-jackson" in source_text
+        and debug.get("retrieval_query") == "Michael Jackson awards"
+        and debug.get("active_topic") == "Michael Jackson"
+        and unknown_answer not in reply
+        and isinstance(sources, list)
+        and bool(sources)
+    )
+elif check == "chat_michael_jackson_birth_followup":
+    reply = payload.get("reply", "")
+    sources = payload.get("sources")
+    debug = payload.get("debug", {})
+    source_text = json.dumps(sources, ensure_ascii=False).lower()
+    ok = (
+        isinstance(reply, str)
+        and ("1958" in reply or "august 29, 1958" in reply.lower())
+        and "michael-jackson" in source_text
+        and debug.get("original_query") == "What year was he born?"
+        and debug.get("retrieval_query") == "Michael Jackson birth date"
+        and debug.get("active_topic") == "Michael Jackson"
+        and debug.get("resolver_reason") == "life_event_follow_up"
+        and "Michael Jackson" in debug.get("source_titles", [])
+        and "Michael Jackson" in debug.get("history_source_titles", [])
         and unknown_answer not in reply
         and isinstance(sources, list)
         and bool(sources)
@@ -110,12 +165,50 @@ elif check == "chat_michael_jackson_awards":
 elif check == "chat_michael_jackson_death_followup":
     reply = payload.get("reply", "")
     sources = payload.get("sources")
+    debug = payload.get("debug", {})
     source_text = json.dumps(sources, ensure_ascii=False).lower()
     ok = (
         isinstance(reply, str)
         and "june 25, 2009" in reply.lower()
         and "michael-jackson" in source_text
+        and debug.get("retrieval_query") == "Michael Jackson death date"
+        and debug.get("active_topic") == "Michael Jackson"
         and unknown_answer not in reply
+        and isinstance(sources, list)
+        and bool(sources)
+    )
+elif check == "chat_michael_jackson_famous_song_followup":
+    reply = payload.get("reply", "")
+    sources = payload.get("sources")
+    debug = payload.get("debug", {})
+    source_text = json.dumps(sources, ensure_ascii=False).lower()
+    lowered_reply = reply.lower()
+    ok = (
+        isinstance(reply, str)
+        and "michael-jackson" in source_text
+        and debug.get("retrieval_query") == "Michael Jackson famous song"
+        and debug.get("active_topic") == "Michael Jackson"
+        and (
+            "does not name one most famous" in lowered_reply
+            or unknown_answer == reply
+            or "famous songs like" in lowered_reply
+        )
+        and isinstance(sources, list)
+        and bool(sources)
+    )
+elif check == "chat_michael_jackson_grammy_count":
+    reply = payload.get("reply", "")
+    sources = payload.get("sources")
+    lowered_reply = reply.lower()
+    source_text = json.dumps(sources, ensure_ascii=False).lower()
+    has_year_count = bool(__import__("re").search(r"\b(?:19|20)\d{2}\s+(?:grammy|american music|brit|billboard music)\s+awards\b", lowered_reply))
+    ok = (
+        isinstance(reply, str)
+        and not has_year_count
+        and "1985 grammy awards" not in lowered_reply
+        and "1984 american music awards" not in lowered_reply
+        and ("15 grammy awards" in lowered_reply or "clean supported total" in lowered_reply)
+        and "michael-jackson" in source_text
         and isinstance(sources, list)
         and bool(sources)
     )
@@ -212,12 +305,52 @@ else
   fail "/chat Wikipedia Canada request"
 fi
 
+chat_michael_jackson_intro_body='{"message":"What can you tell me about Michael Jackson?","knowledge_base":"wikipedia"}'
+chat_michael_jackson_intro=$(curl_json POST "$backend_url/chat" "$chat_michael_jackson_intro_body" || true)
+if [[ -z "$chat_michael_jackson_intro" ]]; then
+  fail "/chat Wikipedia Michael Jackson intro request"
+fi
+
+if [[ -n "$chat_michael_jackson_intro" ]]; then
+  chat_michael_jackson_birth_body=$(build_michael_jackson_followup_body "$chat_michael_jackson_intro" "What year was he born?")
+  chat_michael_jackson_birth=$(curl_json POST "$backend_url/chat" "$chat_michael_jackson_birth_body" || true)
+  if [[ -n "$chat_michael_jackson_birth" ]]; then
+    run_json_check "/chat Wikipedia Michael Jackson birth follow-up" "$chat_michael_jackson_birth" "chat_michael_jackson_birth_followup"
+  else
+    fail "/chat Wikipedia Michael Jackson birth follow-up request"
+  fi
+
+  chat_michael_jackson_death_turn_body=$(build_michael_jackson_followup_body "$chat_michael_jackson_intro" "When did he die?")
+  chat_michael_jackson_death_turn=$(curl_json POST "$backend_url/chat" "$chat_michael_jackson_death_turn_body" || true)
+  if [[ -n "$chat_michael_jackson_death_turn" ]]; then
+    run_json_check "/chat Wikipedia Michael Jackson death multi-turn" "$chat_michael_jackson_death_turn" "chat_michael_jackson_death_followup"
+  else
+    fail "/chat Wikipedia Michael Jackson death multi-turn request"
+  fi
+
+  chat_michael_jackson_famous_song_body=$(build_michael_jackson_followup_body "$chat_michael_jackson_intro" "What's his most famous song?")
+  chat_michael_jackson_famous_song=$(curl_json POST "$backend_url/chat" "$chat_michael_jackson_famous_song_body" || true)
+  if [[ -n "$chat_michael_jackson_famous_song" ]]; then
+    run_json_check "/chat Wikipedia Michael Jackson famous-song follow-up" "$chat_michael_jackson_famous_song" "chat_michael_jackson_famous_song_followup"
+  else
+    fail "/chat Wikipedia Michael Jackson famous-song follow-up request"
+  fi
+fi
+
 chat_michael_jackson_awards_body='{"message":"How many awards did he win?","knowledge_base":"wikipedia","history":[{"role":"user","content":"Tell me about Michael Jackson."},{"role":"assistant","content":"Michael Joseph Jackson was an American singer, songwriter, dancer, and philanthropist.","source_titles":["Michael Jackson"]}]}'
 chat_michael_jackson_awards=$(curl_json POST "$backend_url/chat" "$chat_michael_jackson_awards_body" || true)
 if [[ -n "$chat_michael_jackson_awards" ]]; then
   run_json_check "/chat Wikipedia Michael Jackson awards follow-up" "$chat_michael_jackson_awards" "chat_michael_jackson_awards"
 else
   fail "/chat Wikipedia Michael Jackson awards follow-up request"
+fi
+
+chat_michael_jackson_grammy_body='{"message":"How many Grammy Awards did Michael Jackson win?","knowledge_base":"wikipedia"}'
+chat_michael_jackson_grammy=$(curl_json POST "$backend_url/chat" "$chat_michael_jackson_grammy_body" || true)
+if [[ -n "$chat_michael_jackson_grammy" ]]; then
+  run_json_check "/chat Wikipedia Michael Jackson Grammy count cleanup" "$chat_michael_jackson_grammy" "chat_michael_jackson_grammy_count"
+else
+  fail "/chat Wikipedia Michael Jackson Grammy count request"
 fi
 
 chat_michael_jackson_death_body='{"message":"When did he die?","knowledge_base":"wikipedia","history":[{"role":"user","content":"Tell me about Michael Jackson."},{"role":"assistant","content":"Michael Joseph Jackson was an American singer, songwriter, dancer, and philanthropist.","source_titles":["Michael Jackson"]},{"role":"user","content":"How many awards did he win?"},{"role":"assistant","content":"The selected Wikipedia article does not give one single total, but it says Jackson has many awards and lists 13 Grammy Awards, 6 Brit Awards, 5 Billboard Music Awards and 24 American Music Awards.","source_titles":["List of awards and nominations received by Michael Jackson"]}]}'
