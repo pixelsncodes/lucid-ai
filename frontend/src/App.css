@@ -531,7 +531,7 @@ button {
 
 .dock-grid {
   display: grid;
-  grid-template-columns: minmax(190px, 1fr) minmax(122px, 0.42fr) minmax(154px, 0.55fr) auto auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.74fr) minmax(116px, 0.42fr) minmax(146px, 0.55fr) auto auto;
   gap: 8px;
   align-items: center;
 }
@@ -564,11 +564,13 @@ button {
   background: transparent;
 }
 
-.model-select {
+.model-select,
+.voice-select {
   position: relative;
 }
 
-.model-select-button {
+.model-select-button,
+.voice-select-button {
   min-width: 0;
   width: 100%;
   min-height: 28px;
@@ -587,26 +589,30 @@ button {
   cursor: pointer;
 }
 
-.model-select-button:disabled {
+.model-select-button:disabled,
+.voice-select-button:disabled {
   color: var(--text-muted);
   cursor: not-allowed;
   opacity: 0.58;
 }
 
-.model-select-button span {
+.model-select-button span,
+.voice-select-button span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.model-select-chevron {
+.model-select-chevron,
+.voice-select-chevron {
   width: 0.62rem;
   flex: 0 0 auto;
   color: #55555f;
 }
 
-.model-select-menu {
+.model-select-menu,
+.voice-select-menu {
   position: absolute;
   z-index: 10;
   left: -9px;
@@ -621,7 +627,8 @@ button {
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.46);
 }
 
-.model-select-option {
+.model-select-option,
+.voice-select-option {
   width: 100%;
   min-height: 30px;
   display: block;
@@ -638,14 +645,42 @@ button {
 }
 
 .model-select-option:hover,
-.model-select-option:focus-visible {
+.model-select-option:focus-visible,
+.voice-select-option:hover:not(:disabled),
+.voice-select-option:focus-visible:not(:disabled) {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.055);
 }
 
-.model-select-option--selected {
+.model-select-option--selected,
+.voice-select-option--selected {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.035);
+}
+
+.voice-select-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.voice-select-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-select-option span:last-child {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.voice-select-option:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 .setting-field--stepper input {
@@ -917,6 +952,7 @@ button {
 .setting-field select:focus-visible,
 .setting-field input:focus-visible,
 .model-select-button:focus-visible,
+.voice-select-button:focus-visible,
 .stepper-button:focus-visible,
 .speak-button:focus-visible,
 .toggle-shell input:focus-visible + .toggle-track {
@@ -926,7 +962,7 @@ button {
 
 @media (max-width: 1040px) {
   .dock-grid {
-    grid-template-columns: minmax(170px, 1fr) minmax(116px, 0.42fr) minmax(148px, 0.55fr) auto auto;
+    grid-template-columns: minmax(170px, 1fr) minmax(140px, 0.74fr) minmax(116px, 0.42fr) minmax(148px, 0.55fr) auto auto;
   }
 }
 
@@ -962,10 +998,11 @@ button {
   }
 
   .dock-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(116px, 0.45fr) minmax(148px, 0.55fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(116px, 0.45fr);
   }
 
-  .setting-field--model {
+  .setting-field--model,
+  .setting-field--voice {
     grid-column: auto;
   }
 
@@ -1027,7 +1064,8 @@ button {
     grid-template-columns: 1fr 1fr;
   }
 
-  .setting-field--model {
+  .setting-field--model,
+  .setting-field--voice {
     grid-column: 1 / -1;
   }
 

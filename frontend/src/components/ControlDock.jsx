@@ -2,6 +2,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowsRotate, faDatabase, faMinus, faPlus, faSliders, faVolumeHigh } from '@fortawesome/free-solid-svg-icons'
 import ModelSelector from './ModelSelector'
 import ToggleControl from './ToggleControl'
+import VoiceSelector from './VoiceSelector'
 
 const clampSteppedValue = (value, min, max, fallback) => {
   const nextValue = Number(value)
@@ -71,11 +72,15 @@ function ControlDock({
   models,
   selectedModel,
   modelStatus,
+  voices,
+  selectedVoiceId,
+  voiceStatus,
   temperature,
   numCtx,
   autoSpeak,
   conversationMode,
   onSelectedModelChange,
+  onSelectedVoiceIdChange,
   onTemperatureChange,
   onNumCtxChange,
   onAutoSpeakChange,
@@ -89,6 +94,13 @@ function ControlDock({
           selectedModel={selectedModel}
           modelStatus={modelStatus}
           onChange={onSelectedModelChange}
+        />
+
+        <VoiceSelector
+          voices={voices}
+          selectedVoiceId={selectedVoiceId}
+          voiceStatus={voiceStatus}
+          onChange={onSelectedVoiceIdChange}
         />
 
         <StepperInput

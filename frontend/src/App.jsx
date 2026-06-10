@@ -18,6 +18,7 @@ const MAX_HISTORY_MESSAGES = 12
 const MAX_HISTORY_CONTENT_LENGTH = 2000
 const MAX_RECORDING_SECONDS = 30
 const AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+const API_BASE_URL = 'http://127.0.0.1:8000'
 const FALLBACK_KNOWLEDGE_BASES = [{ id: 'none', name: 'None' }]
 
 const clampFiniteNumber = (value, min, max, fallback) => {
@@ -45,6 +46,9 @@ function App() {
   const [models, setModels] = useState([])
   const [selectedModel, setSelectedModel] = useState('')
   const [modelStatus, setModelStatus] = useState('loading')
+  const [voices, setVoices] = useState([])
+  const [selectedVoiceId, setSelectedVoiceId] = useState('')
+  const [voiceStatus, setVoiceStatus] = useState('loading')
   const [knowledgeBases, setKnowledgeBases] = useState(FALLBACK_KNOWLEDGE_BASES)
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState('none')
   const [knowledgeBaseStatus, setKnowledgeBaseStatus] = useState('loading')
@@ -74,9 +78,19 @@ function App() {
   }
 
   useEffect(() => {
-    fetch('http://localhost:8000/health')
+    const statusUrl = `${API_BASE_URL}/`
+
+    fetch(statusUrl)
       .then((response) => {
-        setBackendStatus(response.ok ? 'online' : 'offline')
+        if (!response.ok) {
+          throw new Error('Backend status request failed')
+        }
+
+        return response.json()
+      })
+      .then((data) => {
+        const isBackendRunning = data?.status === 'backend running'
+        setBackendStatus(isBackendRunning ? 'online' : 'offline')
       })
       .catch(() => {
         setBackendStatus('offline')
@@ -84,7 +98,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    fetch('http://localhost:8000/models')
+    fetch(`${API_BASE_URL}/models`)
       .then((response) => {
         if (!response.ok) {
           throw new Error('Models request failed')
@@ -108,7 +122,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    fetch('http://localhost:8000/knowledge-bases')
+    fetch(`${API_BASE_URL}/knowledge-bases`)
       .then((response) => {
         if (!response.ok) {
           throw new Error('Knowledge bases request failed')
@@ -143,6 +157,44 @@ function App() {
         setKnowledgeBases(FALLBACK_KNOWLEDGE_BASES)
         setSelectedKnowledgeBase('none')
         setKnowledgeBaseStatus('offline')
+      })
+  }, [])
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/tts/voices`)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Voices request failed')
+        }
+
+        return response.json()
+      })
+      .then((data) => {
+        const returnedVoices = Array.isArray(data.voices) ? data.voices : []
+        const availableVoices = returnedVoices
+          .map((voice) => ({
+            id: String(voice?.id || ''),
+            name: String(voice?.name || voice?.id || ''),
+            engine: String(voice?.engine || ''),
+            language: String(voice?.language || ''),
+            description: String(voice?.description || ''),
+            available: Boolean(voice?.available),
+          }))
+          .filter((voice) => voice.id && voice.name)
+        const defaultVoiceId = String(data.default_voice_id || '')
+        const defaultVoice = availableVoices.find(
+          (voice) => voice.id === defaultVoiceId && voice.available,
+        )
+        const firstAvailableVoice = availableVoices.find((voice) => voice.available)
+
+        setVoices(availableVoices)
+        setSelectedVoiceId(defaultVoice?.id || firstAvailableVoice?.id || defaultVoiceId)
+        setVoiceStatus(availableVoices.length > 0 ? 'ready' : 'empty')
+      })
+      .catch(() => {
+        setVoices([])
+        setSelectedVoiceId('')
+        setVoiceStatus('offline')
       })
   }, [])
 
@@ -202,7 +254,7 @@ function App() {
     setIsSending(true)
 
     try {
-      const response = await fetch('http://localhost:8000/chat', {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -253,7 +305,7 @@ function App() {
       const formData = new FormData()
       formData.append('audio', audioBlob, 'recording.webm')
 
-      const response = await fetch('http://localhost:8000/stt', {
+      const response = await fetch(`${API_BASE_URL}/stt`, {
         method: 'POST',
         body: formData,
       })
@@ -435,12 +487,17 @@ function App() {
     }
 
     try {
-      const response = await fetch('http://localhost:8000/tts', {
+      const ttsPayload = { text: chatMessage.text }
+      if (selectedVoiceId) {
+        ttsPayload.voice_id = selectedVoiceId
+      }
+
+      const response = await fetch(`${API_BASE_URL}/tts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ text: chatMessage.text }),
+        body: JSON.stringify(ttsPayload),
         signal: controller.signal,
       })
 
@@ -620,11 +677,15 @@ function App() {
           models,
           selectedModel,
           modelStatus,
+          voices,
+          selectedVoiceId,
+          voiceStatus,
           temperature,
           numCtx,
           autoSpeak,
           conversationMode,
           onSelectedModelChange: setSelectedModel,
+          onSelectedVoiceIdChange: setSelectedVoiceId,
           onTemperatureChange: (value) =>
             setTemperature(
               clampFiniteNumber(
