@@ -43,6 +43,34 @@ check_url() {
   fi
 }
 
+print_tts_voice_status() {
+  local voices_json=$1
+
+  python3 - "$voices_json" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except json.JSONDecodeError:
+    print("  unavailable")
+    raise SystemExit(0)
+
+voices = payload.get("voices")
+if not isinstance(voices, list):
+    voices = []
+
+available_count = sum(
+    1
+    for voice in voices
+    if isinstance(voice, dict) and voice.get("available") is True
+)
+
+print(f"  default:   {payload.get('default_voice_id') or 'unknown'}")
+print(f"  available: {available_count}/{len(voices)}")
+PY
+}
+
 cd "$repo_root"
 
 echo "LUCID dev status"
@@ -53,9 +81,19 @@ echo "Git:"
 git status --short --branch
 echo
 
-printf 'Backend:  %s (%s)\n' "$(check_url "$backend_url/health")" "$backend_url"
+backend_status=$(check_url "$backend_url/health")
+printf 'Backend:  %s (%s)\n' "$backend_status" "$backend_url"
 printf 'Frontend: %s (%s)\n' "$(check_url "$frontend_url")" "$frontend_url"
 echo
+
+if [[ "$backend_status" == "running" ]] && command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  voices_json=$(curl -fsS --max-time 2 "$backend_url/tts/voices" 2>/dev/null || true)
+  if [[ -n "$voices_json" ]]; then
+    echo "TTS voices:"
+    print_tts_voice_status "$voices_json"
+    echo
+  fi
+fi
 
 echo "Wikipedia files:"
 print_file_size "seed articles" "$wiki_dir/articles.json"

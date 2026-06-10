@@ -50,6 +50,8 @@ run_step "compile backend files" "$python_bin" -m py_compile \
   scripts/import_wikipedia_xml.py \
   scripts/build_wikipedia_index.py
 
+run_step "TTS smoke script syntax" bash -n "$repo_root/scripts/tts_smoke_test.sh"
+
 run_step "TTS voice registry" "$python_bin" - <<'PY'
 from pathlib import Path
 
