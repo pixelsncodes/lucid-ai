@@ -45,9 +45,32 @@ echo
 
 run_step "compile backend files" "$python_bin" -m py_compile \
   main.py \
+  tts_voices.py \
   wiki_store.py \
   scripts/import_wikipedia_xml.py \
   scripts/build_wikipedia_index.py
+
+run_step "TTS voice registry" "$python_bin" - <<'PY'
+from pathlib import Path
+
+from tts_voices import TTS_DEFAULT_VOICE_ID, TTS_VOICES, public_voice_payload
+
+backend_dir = Path.cwd()
+payload = public_voice_payload(backend_dir)
+
+if not TTS_VOICES:
+    raise SystemExit("TTS_VOICES is empty")
+
+if not any(voice["id"] == TTS_DEFAULT_VOICE_ID for voice in TTS_VOICES):
+    raise SystemExit("default voice id is not present in TTS_VOICES")
+
+if not payload["voices"]:
+    raise SystemExit("public payload has no voices")
+
+for public_voice in payload["voices"]:
+    if "model_path" in public_voice or "config_path" in public_voice:
+        raise SystemExit("public voice payload exposes internal paths")
+PY
 
 run_step "sqlite FTS5 available" "$python_bin" - <<'PY'
 import sqlite3

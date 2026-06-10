@@ -27,11 +27,12 @@ from config import (
     STT_MODEL,
     SYSTEM_PROMPT,
     TTS_MAX_TEXT_LENGTH,
-    TTS_MODEL_PATH,
 )
+from tts_voices import public_voice_payload, resolve_voice
 
 app = FastAPI(title="LUCID Backend")
 
+BASE_DIR = Path(__file__).parent
 WIKIPEDIA_ARTICLES_PATH = Path(__file__).parent / "data" / "wikipedia" / "articles.json"
 
 
@@ -98,6 +99,7 @@ class ChatRequest(BaseModel):
 
 class TTSRequest(BaseModel):
     text: str
+    voice_id: Optional[str] = None
 
     @field_validator("text")
     @classmethod
@@ -108,6 +110,15 @@ class TTSRequest(BaseModel):
         if len(trimmed_text) > TTS_MAX_TEXT_LENGTH:
             raise ValueError(f"text must be {TTS_MAX_TEXT_LENGTH} characters or fewer")
         return trimmed_text
+
+    @field_validator("voice_id")
+    @classmethod
+    def validate_voice_id(cls, value):
+        if value is None:
+            return value
+
+        trimmed_voice_id = value.strip()
+        return trimmed_voice_id or None
 
 
 KNOWLEDGE_BASES = [
@@ -347,6 +358,11 @@ def get_knowledge_bases():
     return KNOWLEDGE_BASES
 
 
+@app.get("/tts/voices")
+def get_tts_voices():
+    return public_voice_payload(BASE_DIR)
+
+
 @app.get("/rag/search")
 def search_rag(
     q: str = Query(..., min_length=1),
@@ -427,9 +443,9 @@ async def speech_to_text(audio: UploadFile = File(...)):
 
 @app.post("/tts")
 def text_to_speech(request: TTSRequest):
-    model_path = Path(TTS_MODEL_PATH)
-    if not model_path.exists():
-        raise HTTPException(status_code=500, detail=f"TTS model file is missing: {TTS_MODEL_PATH}")
+    voice, fallback_used = resolve_voice(request.voice_id, BASE_DIR)
+    if voice is None:
+        raise HTTPException(status_code=500, detail="Default TTS voice is unavailable.")
 
     temp_wav_path = None
     try:
@@ -437,7 +453,7 @@ def text_to_speech(request: TTSRequest):
             temp_wav_path = Path(temp_wav.name)
 
         result = subprocess.run(
-            [sys.executable, "-m", "piper", "-m", TTS_MODEL_PATH, "-f", str(temp_wav_path)],
+            [sys.executable, "-m", "piper", "-m", str(voice["model_path"]), "-f", str(temp_wav_path)],
             input=request.text,
             text=True,
             capture_output=True,
@@ -446,10 +462,13 @@ def text_to_speech(request: TTSRequest):
 
         if result.returncode != 0:
             error = result.stderr.strip() or "Piper exited with a non-zero status."
-            raise HTTPException(status_code=500, detail=f"TTS generation failed: {error}")
+            raise HTTPException(status_code=500, detail=f"TTS generation failed for voice {voice['id']}: {error}")
 
         wav_bytes = temp_wav_path.read_bytes()
-        return Response(content=wav_bytes, media_type="audio/wav")
+        headers = {"X-LUCID-TTS-Voice-Id": voice["id"]}
+        if fallback_used:
+            headers["X-LUCID-TTS-Fallback"] = "true"
+        return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
     finally:
         if temp_wav_path is not None:
             temp_wav_path.unlink(missing_ok=True)
