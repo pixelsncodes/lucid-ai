@@ -55,6 +55,7 @@ function App() {
   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
   const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX)
   const [autoSpeak, setAutoSpeak] = useState(true)
+  const [autoSendVoice, setAutoSendVoice] = useState(false)
   const [conversationMode, setConversationMode] = useState(true)
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState(null)
   const [speechStatus, setSpeechStatus] = useState(null)
@@ -66,6 +67,7 @@ function App() {
   const recordingTimeoutRef = useRef(null)
   const chatMessagesRef = useRef([])
   const autoSpeakRef = useRef(true)
+  const autoSendVoiceRef = useRef(false)
   const nextChatMessageIdRef = useRef(1)
   const autoSpokenMessageIdsRef = useRef(new Set())
   const activeSpeechRef = useRef(null)
@@ -216,6 +218,10 @@ function App() {
     autoSpeakRef.current = autoSpeak
   }, [autoSpeak])
 
+  useEffect(() => {
+    autoSendVoiceRef.current = autoSendVoice
+  }, [autoSendVoice])
+
   const sendChatMessage = async (
     text,
     { allowDuringTranscribe = false, allowDuringRecording = false } = {},
@@ -337,7 +343,9 @@ function App() {
   }
 
   const handleToggleRecording = async (mode = 'draft') => {
-    if (isTranscribing || isSending || (mode === 'send' && !selectedModel.trim())) {
+    const willAutoSend = mode === 'send' && autoSendVoiceRef.current
+
+    if (isTranscribing || isSending || (willAutoSend && !selectedModel.trim())) {
       return
     }
 
@@ -388,7 +396,9 @@ function App() {
         audioChunksRef.current = []
 
         if (audioBlob.size > 0) {
-          transcribeAudio(audioBlob, { autoSend: stoppedMode === 'send' })
+          transcribeAudio(audioBlob, {
+            autoSend: stoppedMode === 'send' && autoSendVoiceRef.current,
+          })
         } else {
           setVoiceError('No audio was recorded.')
         }
@@ -421,6 +431,11 @@ function App() {
     setConversationMode(enabled)
     setAutoSpeak(enabled)
     autoSpeakRef.current = enabled
+  }
+
+  const handleAutoSendVoiceChange = (enabled) => {
+    setAutoSendVoice(enabled)
+    autoSendVoiceRef.current = enabled
   }
 
   const stopActiveSpeech = () => {
@@ -641,12 +656,14 @@ function App() {
   const isVoiceActionDisabled =
     isSending ||
     isTranscribing ||
-    !selectedModel.trim() ||
+    (autoSendVoice && !selectedModel.trim()) ||
     (isRecording && recordingMode !== 'send')
   const voiceActionLabel = isTranscribing
     ? 'Transcribing'
     : isRecording && recordingMode === 'send'
-      ? 'Stop & Send'
+      ? autoSendVoice
+        ? 'Stop & Send'
+        : 'Stop'
       : 'Speak'
 
   return (
@@ -670,6 +687,7 @@ function App() {
         isRecording={isRecording}
         recordingMode={recordingMode}
         isVoiceActionDisabled={isVoiceActionDisabled}
+        autoSendVoice={autoSendVoice}
         handleToggleRecording={handleToggleRecording}
         chatMessages={chatMessages}
         voiceError={voiceError}
@@ -683,6 +701,7 @@ function App() {
           temperature,
           numCtx,
           autoSpeak,
+          autoSendVoice,
           conversationMode,
           onSelectedModelChange: setSelectedModel,
           onSelectedVoiceIdChange: setSelectedVoiceId,
@@ -697,6 +716,7 @@ function App() {
             ),
           onNumCtxChange: (value) => setNumCtx(clampContextSize(value)),
           onAutoSpeakChange: setAutoSpeak,
+          onAutoSendVoiceChange: handleAutoSendVoiceChange,
           onConversationModeChange: handleConversationModeChange,
         }}
         chatPanelProps={{
@@ -714,6 +734,7 @@ function App() {
           isTranscribing,
           recordingMode,
           selectedModel,
+          autoSendVoice,
           conversationMode,
         }}
       />

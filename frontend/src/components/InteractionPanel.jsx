@@ -30,6 +30,12 @@ function InteractionPanel({ chatMessages, controlDockProps, chatPanelProps }) {
   const lastUserMessage = getLastMessage(chatMessages, 'user')
   const lastAssistantMessage = getLastMessage(chatMessages, 'assistant')
   const hasPreview = Boolean(lastUserMessage || lastAssistantMessage)
+  const conversationVoiceLabel = chatPanelProps.autoSendVoice
+    ? 'Conversation voice'
+    : 'Transcribe voice'
+  const stopConversationVoiceLabel = chatPanelProps.autoSendVoice
+    ? 'Stop and send conversation voice'
+    : 'Stop voice transcription'
 
   return (
     <section className="interaction-panel" aria-label="LUCID interaction">
@@ -97,19 +103,19 @@ function InteractionPanel({ chatMessages, controlDockProps, chatPanelProps }) {
             disabled={
               chatPanelProps.isSending ||
               chatPanelProps.isTranscribing ||
-              !chatPanelProps.selectedModel.trim() ||
+              (chatPanelProps.autoSendVoice && !chatPanelProps.selectedModel.trim()) ||
               (chatPanelProps.isRecording && chatPanelProps.recordingMode !== 'send')
             }
             aria-label={
               chatPanelProps.isRecording && chatPanelProps.recordingMode === 'send'
-                ? 'Stop and send conversation voice'
-                : 'Conversation voice'
+                ? stopConversationVoiceLabel
+                : conversationVoiceLabel
             }
             aria-pressed={chatPanelProps.isRecording && chatPanelProps.recordingMode === 'send'}
             title={
               chatPanelProps.isRecording && chatPanelProps.recordingMode === 'send'
-                ? 'Stop and send conversation voice'
-                : 'Conversation voice'
+                ? stopConversationVoiceLabel
+                : conversationVoiceLabel
             }
           >
             <FontAwesomeIcon

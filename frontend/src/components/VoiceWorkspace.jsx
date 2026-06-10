@@ -10,6 +10,7 @@ function VoiceWorkspace({
   isRecording,
   recordingMode,
   isVoiceActionDisabled,
+  autoSendVoice,
   handleToggleRecording,
   chatMessages,
   voiceError,
@@ -27,6 +28,7 @@ function VoiceWorkspace({
             isRecording={isRecording}
             recordingMode={recordingMode}
             isVoiceActionDisabled={isVoiceActionDisabled}
+            autoSendVoice={autoSendVoice}
             onToggleRecording={handleToggleRecording}
           />
           <div className="voice-copy" aria-live="polite">

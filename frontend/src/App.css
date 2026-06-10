@@ -531,7 +531,7 @@ button {
 
 .dock-grid {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.74fr) minmax(116px, 0.42fr) minmax(146px, 0.55fr) auto auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.74fr) minmax(116px, 0.42fr) minmax(146px, 0.55fr) auto minmax(142px, auto) auto;
   gap: 8px;
   align-items: center;
 }
@@ -962,7 +962,7 @@ button {
 
 @media (max-width: 1040px) {
   .dock-grid {
-    grid-template-columns: minmax(170px, 1fr) minmax(140px, 0.74fr) minmax(116px, 0.42fr) minmax(148px, 0.55fr) auto auto;
+    grid-template-columns: minmax(170px, 1fr) minmax(140px, 0.74fr) minmax(116px, 0.42fr) minmax(148px, 0.55fr) auto minmax(142px, auto) auto;
   }
 }
 

@@ -78,12 +78,14 @@ function ControlDock({
   temperature,
   numCtx,
   autoSpeak,
+  autoSendVoice,
   conversationMode,
   onSelectedModelChange,
   onSelectedVoiceIdChange,
   onTemperatureChange,
   onNumCtxChange,
   onAutoSpeakChange,
+  onAutoSendVoiceChange,
   onConversationModeChange,
 }) {
   return (
@@ -132,6 +134,13 @@ function ControlDock({
           checked={autoSpeak}
           disabled={conversationMode}
           onChange={onAutoSpeakChange}
+        />
+
+        <ToggleControl
+          id="auto-send-voice-input"
+          label="Auto-send voice"
+          checked={autoSendVoice}
+          onChange={onAutoSendVoiceChange}
         />
 
         <ToggleControl

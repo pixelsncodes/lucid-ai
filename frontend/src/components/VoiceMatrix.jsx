@@ -5,9 +5,12 @@ function VoiceMatrix({
   isRecording,
   recordingMode,
   isVoiceActionDisabled,
+  autoSendVoice,
   onToggleRecording,
 }) {
   const loaderSpeed = voiceStatusLabel === 'Idle' ? 0.4 : voiceLoaderSettings.speed
+  const voiceButtonLabel = autoSendVoice ? 'Record and send voice' : 'Record voice'
+  const stopVoiceButtonLabel = autoSendVoice ? 'Stop and send voice' : 'Stop voice recording'
 
   return (
     <button
@@ -15,7 +18,7 @@ function VoiceMatrix({
       className={`voice-button voice-button--${voiceStatusLabel.toLowerCase()}`}
       onClick={() => onToggleRecording('send')}
       disabled={isVoiceActionDisabled}
-      aria-label={isRecording && recordingMode === 'send' ? 'Stop and send voice' : 'Record and send voice'}
+      aria-label={isRecording && recordingMode === 'send' ? stopVoiceButtonLabel : voiceButtonLabel}
       aria-pressed={isRecording && recordingMode === 'send'}
     >
       <VoiceLoader
