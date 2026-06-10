@@ -119,6 +119,31 @@ elif check == "chat_michael_jackson_death_followup":
         and isinstance(sources, list)
         and bool(sources)
     )
+elif check == "chat_tool_other_bands_followup":
+    reply = payload.get("reply", "")
+    sources = payload.get("sources")
+    source_text = json.dumps(sources, ensure_ascii=False).lower()
+    lowered_reply = reply.lower()
+    ok = (
+        isinstance(reply, str)
+        and ("a perfect circle" in lowered_reply or "puscifer" in lowered_reply)
+        and "maynard-james-keenan" in source_text
+        and unknown_answer not in reply
+        and isinstance(sources, list)
+        and bool(sources)
+    )
+elif check == "chat_canada_after_michael_jackson":
+    reply = payload.get("reply", "")
+    sources = payload.get("sources")
+    source_text = json.dumps(sources, ensure_ascii=False).lower()
+    ok = (
+        isinstance(reply, str)
+        and "ottawa" in reply.lower()
+        and "michael-jackson" not in source_text
+        and unknown_answer not in reply
+        and isinstance(sources, list)
+        and bool(sources)
+    )
 elif check == "chat_atlantis":
     reply = payload.get("reply", "")
     ok = reply == unknown_answer
@@ -203,12 +228,36 @@ else
   fail "/chat Wikipedia Michael Jackson death follow-up request"
 fi
 
+chat_tool_other_bands_body='{"message":"Does he work with any other bands?","knowledge_base":"wikipedia","history":[{"role":"user","content":"Who is the singer of the band Tool?"},{"role":"assistant","content":"Maynard James Keenan is the singer of Tool.","source_titles":["Tool (band)","Kansas","Tool (band)"]}]}'
+chat_tool_other_bands=$(curl_json POST "$backend_url/chat" "$chat_tool_other_bands_body" || true)
+if [[ -n "$chat_tool_other_bands" ]]; then
+  run_json_check "/chat Wikipedia Tool singer other bands follow-up" "$chat_tool_other_bands" "chat_tool_other_bands_followup"
+else
+  fail "/chat Wikipedia Tool singer other bands follow-up request"
+fi
+
+chat_canada_after_michael_jackson_body='{"message":"What is the capital of Canada?","knowledge_base":"wikipedia","history":[{"role":"user","content":"Tell me about Michael Jackson."},{"role":"assistant","content":"Michael Joseph Jackson was an American singer, songwriter, dancer, and philanthropist.","source_titles":["Michael Jackson"]}]}'
+chat_canada_after_michael_jackson=$(curl_json POST "$backend_url/chat" "$chat_canada_after_michael_jackson_body" || true)
+if [[ -n "$chat_canada_after_michael_jackson" ]]; then
+  run_json_check "/chat Wikipedia Canada after Michael Jackson stays standalone" "$chat_canada_after_michael_jackson" "chat_canada_after_michael_jackson"
+else
+  fail "/chat Wikipedia Canada after Michael Jackson request"
+fi
+
 chat_atlantis_body='{"message":"What is the capital of Atlantis?","knowledge_base":"wikipedia"}'
 chat_atlantis=$(curl_json POST "$backend_url/chat" "$chat_atlantis_body" || true)
 if [[ -n "$chat_atlantis" ]]; then
   run_json_check "/chat Wikipedia Atlantis unknown answer" "$chat_atlantis" "chat_atlantis"
 else
   fail "/chat Wikipedia Atlantis request"
+fi
+
+chat_atlantis_after_tool_body='{"message":"What is the capital of Atlantis?","knowledge_base":"wikipedia","history":[{"role":"user","content":"Tell me about Tool."},{"role":"assistant","content":"Tool is an American rock band.","source_titles":["Tool (band)"]}]}'
+chat_atlantis_after_tool=$(curl_json POST "$backend_url/chat" "$chat_atlantis_after_tool_body" || true)
+if [[ -n "$chat_atlantis_after_tool" ]]; then
+  run_json_check "/chat Wikipedia Atlantis after Tool unknown answer" "$chat_atlantis_after_tool" "chat_atlantis"
+else
+  fail "/chat Wikipedia Atlantis after Tool request"
 fi
 
 echo

@@ -441,11 +441,38 @@ FOLLOW_UP_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 FOLLOW_UP_PHRASE_PATTERN = re.compile(
-    r"\b(what happened next|what about|how many|when was|where was)\b",
+    r"\b(what happened next|what about|how many|when was|where was|tell me more)\b",
     re.IGNORECASE,
 )
 PROPER_NOUN_PATTERN = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}\b")
 FOLLOW_UP_PRONOUN_PATTERN = r"(?:he|she|they|him|her|them|his|their)"
+GENERAL_FOLLOW_UP_PATTERNS = [
+    (
+        re.compile(
+            r"^\s*(?:does|did|was|is|can|could|would|will|has|have)\s+(?:he|she|they|it|him|her|them|that|this)\b",
+            re.IGNORECASE,
+        ),
+        "pronoun_follow_up",
+    ),
+    (
+        re.compile(
+            r"^\s*(?:when|where|why|how|what|which)\s+(?:did|does|was|is|were|are|has|have)\s+(?:he|she|they|it|him|her|them|that|this)\b",
+            re.IGNORECASE,
+        ),
+        "pronoun_follow_up",
+    ),
+    (
+        re.compile(
+            r"^\s*(?:what\s+else|which\s+other|what\s+about\s+(?:his|her|their|its|that|this)|tell\s+me\s+more\s+about\s+(?:him|her|them|it|that|this))\b",
+            re.IGNORECASE,
+        ),
+        "context_phrase_follow_up",
+    ),
+    (
+        re.compile(r"^\s*how\s+many\b", re.IGNORECASE),
+        "context_phrase_follow_up",
+    ),
+]
 LIFE_EVENT_FOLLOW_UP_PATTERNS = [
     (
         re.compile(
@@ -487,7 +514,8 @@ LIFE_EVENT_FOLLOW_UP_PATTERNS = [
 
 def is_context_dependent_wikipedia_query(message: str) -> bool:
     return bool(
-        FOLLOW_UP_REFERENCE_PATTERN.search(message)
+        any(pattern.search(message) for pattern, _reason in GENERAL_FOLLOW_UP_PATTERNS)
+        or FOLLOW_UP_REFERENCE_PATTERN.search(message)
         or FOLLOW_UP_PHRASE_PATTERN.search(message)
     )
 
@@ -496,9 +524,77 @@ def extract_recent_topic_from_text(text: str) -> str | None:
     for match in PROPER_NOUN_PATTERN.finditer(text):
         topic = match.group(0).strip()
         first_word = topic.split()[0].lower()
-        if first_word in {"tell", "what", "when", "where", "how", "the", "this", "that"}:
+        if first_word in {
+            "tell",
+            "what",
+            "when",
+            "where",
+            "how",
+            "the",
+            "this",
+            "that",
+            "selected",
+            "wikipedia",
+        }:
+            continue
+        if topic.lower() in {"american", "english", "french", "canadian"}:
             continue
         return topic
+
+    return None
+
+
+def normalize_topic_tokens(topic: str) -> set[str]:
+    return set(query_terms(topic))
+
+
+def canonicalize_answer_entity(entity: str, source_titles: list[str]) -> str:
+    entity_terms = normalize_topic_tokens(entity)
+    if not entity_terms:
+        return entity
+
+    for title in source_titles:
+        topic = normalize_wikipedia_source_topic(title)
+        title_terms = normalize_topic_tokens(topic)
+        if title_terms and title_terms <= entity_terms:
+            return topic
+
+    return entity
+
+
+def recent_wikipedia_source_titles(history: list[ChatMessage]) -> list[str]:
+    source_titles = []
+    for history_message in reversed(history[-6:]):
+        for title in history_message.source_titles:
+            topic = normalize_wikipedia_source_topic(title)
+            if topic and topic not in source_titles:
+                source_titles.append(topic)
+
+    return source_titles[:6]
+
+
+def recent_wikipedia_answer_entity(history: list[ChatMessage]) -> str | None:
+    for history_message in reversed(history[-6:]):
+        if history_message.role != "assistant":
+            continue
+        if re.match(r"^\s*the\s+selected\s+wikipedia\s+article\b", history_message.content, flags=re.IGNORECASE):
+            continue
+
+        topic = extract_recent_topic_from_text(history_message.content)
+        if topic:
+            return canonicalize_answer_entity(topic, history_message.source_titles)
+
+    return None
+
+
+def recent_wikipedia_user_topic(history: list[ChatMessage]) -> str | None:
+    for history_message in reversed(history[-6:]):
+        if history_message.role != "user":
+            continue
+
+        topic = extract_recent_topic_from_text(history_message.content)
+        if topic:
+            return topic
 
     return None
 
@@ -521,27 +617,15 @@ def normalize_wikipedia_source_topic(title: str) -> str:
 
 
 def recent_wikipedia_topic(history: list[ChatMessage]) -> str | None:
-    for history_message in reversed(history[-6:]):
-        if history_message.source_titles:
-            return normalize_wikipedia_source_topic(history_message.source_titles[0])
+    answer_entity = recent_wikipedia_answer_entity(history)
+    if answer_entity:
+        return answer_entity
 
-    for history_message in reversed(history[-6:]):
-        if history_message.role != "user":
-            continue
+    source_titles = recent_wikipedia_source_titles(history)
+    if source_titles:
+        return source_titles[0]
 
-        topic = extract_recent_topic_from_text(history_message.content)
-        if topic:
-            return topic
-
-    for history_message in reversed(history[-6:]):
-        if history_message.role != "assistant":
-            continue
-
-        topic = extract_recent_topic_from_text(history_message.content)
-        if topic:
-            return topic
-
-    return None
+    return recent_wikipedia_user_topic(history)
 
 
 def wikipedia_life_event_follow_up_terms(message: str) -> str | None:
@@ -552,27 +636,76 @@ def wikipedia_life_event_follow_up_terms(message: str) -> str | None:
     return None
 
 
-def build_wikipedia_retrieval_query(message: str, history: list[ChatMessage]) -> str:
-    if not is_context_dependent_wikipedia_query(message):
-        return message
+def wikipedia_follow_up_reason(message: str) -> str | None:
+    explicit_topic = extract_recent_topic_from_text(message)
+    has_reference = bool(FOLLOW_UP_REFERENCE_PATTERN.search(message))
+    context_phrase_topic_match = re.match(
+        r"^\s*(?:what\s+about|tell\s+me\s+more\s+about)\s+(.+?)\s*[?.!]*\s*$",
+        message,
+        flags=re.IGNORECASE,
+    )
+    context_phrase_topic = context_phrase_topic_match.group(1).strip() if context_phrase_topic_match else ""
+    has_named_context_phrase_topic = bool(context_phrase_topic and context_phrase_topic[0].isupper())
+    life_event_terms = wikipedia_life_event_follow_up_terms(message)
+    if life_event_terms:
+        return "life_event_follow_up"
+
+    for pattern, reason in GENERAL_FOLLOW_UP_PATTERNS:
+        if pattern.search(message):
+            if reason == "context_phrase_follow_up" and (explicit_topic or has_named_context_phrase_topic) and not has_reference:
+                return None
+            return reason
+
+    if FOLLOW_UP_REFERENCE_PATTERN.search(message):
+        return "pronoun_follow_up"
+    if FOLLOW_UP_PHRASE_PATTERN.search(message):
+        if (explicit_topic or has_named_context_phrase_topic) and not has_reference:
+            return None
+        return "context_phrase_follow_up"
+
+    return None
+
+
+def build_wikipedia_context_resolution(message: str, history: list[ChatMessage]) -> dict[str, str | bool | None]:
+    reason = wikipedia_follow_up_reason(message)
+    if not reason:
+        return {
+            "is_follow_up": False,
+            "active_topic": None,
+            "retrieval_query": message,
+            "reason": None,
+        }
 
     topic = recent_wikipedia_topic(history)
     if not topic:
-        return message
+        return {
+            "is_follow_up": True,
+            "active_topic": None,
+            "retrieval_query": message,
+            "reason": reason,
+        }
 
     life_event_terms = wikipedia_life_event_follow_up_terms(message)
     if life_event_terms:
-        return f"{topic} {life_event_terms}"
+        retrieval_query = f"{topic} {life_event_terms}"
+    else:
+        follow_up_terms = [
+            term
+            for term in query_terms(message)
+            if term not in query_terms(topic)
+        ]
+        retrieval_query = f"{topic} {' '.join(follow_up_terms)}" if follow_up_terms else f"{topic} {message}"
 
-    follow_up_terms = [
-        term
-        for term in query_terms(message)
-        if term not in query_terms(topic)
-    ]
-    if follow_up_terms:
-        return f"{topic} {' '.join(follow_up_terms)}"
+    return {
+        "is_follow_up": True,
+        "active_topic": topic,
+        "retrieval_query": retrieval_query,
+        "reason": reason,
+    }
 
-    return f"{topic} {message}"
+
+def build_wikipedia_retrieval_query(message: str, history: list[ChatMessage]) -> str:
+    return str(build_wikipedia_context_resolution(message, history)["retrieval_query"])
 
 
 app.add_middleware(
