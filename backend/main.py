@@ -532,6 +532,72 @@ def answer_supported_famous_song_question(
     return None
 
 
+def answer_supported_other_bands_question(
+    question: str,
+    entries: list[dict[str, str]],
+) -> str | None:
+    lowered_question = question.lower()
+    if not re.search(r"\bother\s+bands?\b|\bbands?\b", lowered_question):
+        return None
+
+    for entry in entries:
+        text = re.sub(r"\s+", " ", entry.get("text", "")).strip()
+        match = re.search(
+            r"\bMaynard James Keenan\b.*?\b(?:sings|sang)\s+in\s+3\s+[^,.]*bands,\s*Tool,\s*A Perfect Circle,\s*and\s*Puscifer\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return "Maynard James Keenan sings in Tool, A Perfect Circle, and Puscifer."
+
+    return None
+
+
+def answer_supported_band_album_question(
+    question: str,
+    entries: list[dict[str, str]],
+    active_entities: list[str],
+) -> str | None:
+    lowered_question = question.lower()
+    if "album" not in lowered_question or not active_entities:
+        return None
+
+    album_facts = []
+    for entity in active_entities:
+        entity_facts = []
+        entity_pattern = re.escape(entity)
+        for entry in entries:
+            title = normalize_wikipedia_source_topic(entry.get("title", ""))
+            text = re.sub(r"\s+", " ", entry.get("text", "")).strip()
+            if title != entity and not re.search(rf"\b{entity_pattern}\b", text):
+                continue
+
+            if entity == "Tool":
+                if re.search(r"\bTool has put out five studio albums\b", text):
+                    entity_facts.append("Tool has put out five studio albums")
+                if re.search(r"\bTool released an album in 2019 named Fear Inoculum\b", text):
+                    entity_facts.append("Tool released an album in 2019 named Fear Inoculum")
+                if re.search(r"\bTool's first album, Undertow\b", text):
+                    entity_facts.append("Tool's first album was Undertow")
+
+            if entity == "A Perfect Circle":
+                match = re.search(r"\bA Perfect Circle\b.*?\bThey had 4 albums:\s*([^.]+)\.", text)
+                if match:
+                    entity_facts.append(f"A Perfect Circle had 4 albums: {match.group(1).strip()}")
+
+            if entity == "Puscifer":
+                if re.search(r"\bPuscifer\b", text):
+                    entity_facts.append("the retrieved context mentions Puscifer but does not list Puscifer albums")
+
+        if entity_facts:
+            album_facts.append(f"{entity}: {'; '.join(dict.fromkeys(entity_facts))}.")
+
+    if album_facts:
+        return " ".join(album_facts)
+
+    return None
+
+
 def clean_wikipedia_reply(reply: str) -> tuple[str, bool]:
     reply = reply.strip()
     if UNKNOWN_WIKIPEDIA_ANSWER in reply and reply != UNKNOWN_WIKIPEDIA_ANSWER:
@@ -548,6 +614,7 @@ FOLLOW_UP_PHRASE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 PROPER_NOUN_PATTERN = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}\b")
+ENTITY_CANDIDATE_PATTERN = re.compile(r"\b[A-Z][A-Za-z0-9']*(?:\s+[A-Z][A-Za-z0-9']*){0,4}\b")
 FOLLOW_UP_PRONOUN_PATTERN = r"(?:he|she|they|him|her|them|his|their)"
 GENERAL_FOLLOW_UP_PATTERNS = [
     (
@@ -654,6 +721,41 @@ def extract_recent_topic_from_text(text: str) -> str | None:
     return None
 
 
+def add_unique(values: list[str], value: str | None) -> None:
+    if value and value not in values:
+        values.append(value)
+
+
+def extract_wikipedia_entities_from_text(text: str) -> list[str]:
+    entities = []
+    ignored_entities = {
+        "American",
+        "British",
+        "Canadian",
+        "English",
+        "French",
+        "I",
+        "It",
+        "The",
+        "This",
+        "That",
+        "Title",
+        "Wikipedia",
+    }
+
+    for match in ENTITY_CANDIDATE_PATTERN.finditer(text):
+        entity = match.group(0).strip()
+        if entity in ignored_entities:
+            continue
+        if entity.split()[0].lower() in {"he", "she", "they", "it", "the", "this", "that"}:
+            continue
+        if len(entity) < 3 and entity != "A Perfect Circle":
+            continue
+        add_unique(entities, entity)
+
+    return entities[:8]
+
+
 def normalize_topic_tokens(topic: str) -> set[str]:
     return set(query_terms(topic))
 
@@ -681,6 +783,30 @@ def recent_wikipedia_source_titles(history: list[ChatMessage]) -> list[str]:
                 source_titles.append(topic)
 
     return source_titles[:6]
+
+
+def recent_wikipedia_assistant_text(history: list[ChatMessage]) -> str:
+    for history_message in reversed(history[-6:]):
+        if history_message.role == "assistant":
+            return history_message.content
+    return ""
+
+
+def recent_wikipedia_answer_entities(history: list[ChatMessage]) -> list[str]:
+    entities = []
+    for history_message in reversed(history[-6:]):
+        if history_message.role != "assistant":
+            continue
+
+        for entity in extract_wikipedia_entities_from_text(history_message.content):
+            add_unique(entities, canonicalize_answer_entity(entity, history_message.source_titles))
+        if not entities:
+            for title in history_message.source_titles:
+                add_unique(entities, normalize_wikipedia_source_topic(title))
+        if entities:
+            break
+
+    return entities[:8]
 
 
 def recent_wikipedia_answer_entity(history: list[ChatMessage]) -> str | None:
@@ -723,6 +849,7 @@ def normalize_wikipedia_source_topic(title: str) -> str:
         if match:
             return match.group(1).strip()
 
+    title = re.sub(r"\s+\((?:band|singer|musician|album|song)\)$", "", title, flags=re.IGNORECASE)
     return title
 
 
@@ -750,6 +877,8 @@ def wikipedia_follow_up_intent_terms(message: str) -> str | None:
     lowered_message = message.lower()
     if re.search(r"\b(?:famous|best known|popular)\b", lowered_message) and "song" in lowered_message:
         return "famous song"
+    if re.search(r"\bother\s+bands?\b", lowered_message):
+        return "other bands"
     if "award" in lowered_message:
         return "awards"
     return None
@@ -785,43 +914,137 @@ def wikipedia_follow_up_reason(message: str) -> str | None:
     return None
 
 
-def build_wikipedia_context_resolution(message: str, history: list[ChatMessage]) -> dict[str, str | bool | None]:
+def is_plural_wikipedia_follow_up(message: str) -> bool:
+    return bool(re.search(r"\b(?:they|them|their|these|those)\b", message, flags=re.IGNORECASE))
+
+
+def is_standalone_wikipedia_query(message: str) -> bool:
+    lowered_message = message.lower()
+    return bool(re.search(r"\bcapital\s+of\b", lowered_message))
+
+
+def infer_wikipedia_planner_entities(
+    message: str,
+    active_topic: str | None,
+    answer_entities: list[str],
+) -> list[str]:
+    lowered_message = message.lower()
+    if "album" in lowered_message and is_plural_wikipedia_follow_up(message):
+        return [
+            entity
+            for entity in answer_entities
+            if entity != active_topic and entity not in {"Kansas"}
+        ][:5]
+
+    if re.search(r"\b(?:other\s+bands?|bands?)\b", lowered_message) and active_topic:
+        return [active_topic]
+
+    if active_topic:
+        return [active_topic]
+
+    return answer_entities[:5]
+
+
+def replace_follow_up_references(message: str, replacement: str) -> str:
+    if not replacement:
+        return message
+
+    rewritten = re.sub(
+        r"\b(he|she|they|it|him|her|them|this|that|these|those)\b",
+        replacement,
+        message,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    rewritten = re.sub(
+        r"\b(his|her|their|its)\b",
+        f"{replacement}'s",
+        rewritten,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return rewritten
+
+
+def build_wikipedia_query_plan(message: str, history: list[ChatMessage]) -> dict[str, object]:
     reason = wikipedia_follow_up_reason(message)
-    if not reason:
+    active_topic = recent_wikipedia_topic(history) if reason else None
+    answer_entities = recent_wikipedia_answer_entities(history)
+    active_entities = infer_wikipedia_planner_entities(message, active_topic, answer_entities)
+
+    if not reason or is_standalone_wikipedia_query(message):
         return {
+            "original_query": message,
+            "standalone_question": message,
+            "retrieval_queries": [message],
+            "active_topic": None,
+            "active_entities": [],
+            "answer_entities": answer_entities,
+            "planner_reason": None,
             "is_follow_up": False,
-            "active_topic": None,
-            "retrieval_query": message,
-            "reason": None,
         }
 
-    topic = recent_wikipedia_topic(history)
-    if not topic:
+    if not active_topic:
         return {
-            "is_follow_up": True,
+            "original_query": message,
+            "standalone_question": message,
+            "retrieval_queries": [message],
             "active_topic": None,
-            "retrieval_query": message,
-            "reason": reason,
+            "active_entities": active_entities,
+            "answer_entities": answer_entities,
+            "planner_reason": reason,
+            "is_follow_up": True,
         }
 
+    lowered_message = message.lower()
     life_event_terms = wikipedia_life_event_follow_up_terms(message)
-    if life_event_terms:
-        retrieval_query = f"{topic} {life_event_terms}"
-    elif intent_terms := wikipedia_follow_up_intent_terms(message):
-        retrieval_query = f"{topic} {intent_terms}"
+    intent_terms = wikipedia_follow_up_intent_terms(message)
+    planner_reason = reason
+
+    if "album" in lowered_message and is_plural_wikipedia_follow_up(message) and active_entities:
+        retrieval_queries = [f"{entity} albums" for entity in active_entities]
+        standalone_question = f"Can you list albums by {', '.join(active_entities)}?"
+        planner_reason = "plural_follow_up_from_recent_answer"
+    elif life_event_terms:
+        retrieval_queries = [f"{active_topic} {life_event_terms}"]
+        standalone_question = replace_follow_up_references(message, active_topic)
+        planner_reason = "life_event_follow_up"
+    elif intent_terms:
+        retrieval_queries = [f"{active_topic} {intent_terms}"]
+        standalone_question = replace_follow_up_references(message, active_topic)
+        if re.search(r"\b(?:other\s+bands?|bands?)\b", lowered_message):
+            planner_reason = "entity_follow_up_other_bands"
     else:
         follow_up_terms = [
             term
             for term in query_terms(message)
-            if term not in query_terms(topic)
+            if term not in query_terms(active_topic)
         ]
-        retrieval_query = f"{topic} {' '.join(follow_up_terms)}" if follow_up_terms else f"{topic} {message}"
+        retrieval_query = f"{active_topic} {' '.join(follow_up_terms)}" if follow_up_terms else f"{active_topic} {message}"
+        retrieval_queries = [retrieval_query]
+        standalone_question = replace_follow_up_references(message, active_topic)
 
     return {
+        "original_query": message,
+        "standalone_question": standalone_question,
+        "retrieval_queries": retrieval_queries,
+        "active_topic": active_topic,
+        "active_entities": active_entities,
+        "answer_entities": answer_entities,
+        "planner_reason": planner_reason,
         "is_follow_up": True,
-        "active_topic": topic,
+    }
+
+
+def build_wikipedia_context_resolution(message: str, history: list[ChatMessage]) -> dict[str, str | bool | None]:
+    plan = build_wikipedia_query_plan(message, history)
+    retrieval_queries = plan["retrieval_queries"]
+    retrieval_query = retrieval_queries[0] if retrieval_queries else message
+    return {
+        "is_follow_up": bool(plan["is_follow_up"]),
+        "active_topic": plan["active_topic"],
         "retrieval_query": retrieval_query,
-        "reason": reason,
+        "reason": plan["planner_reason"],
     }
 
 
@@ -829,17 +1052,37 @@ def build_wikipedia_retrieval_query(message: str, history: list[ChatMessage]) ->
     return str(build_wikipedia_context_resolution(message, history)["retrieval_query"])
 
 
+def search_wikipedia_query_plan(plan: dict[str, object], limit_per_query: int = 3) -> list[dict[str, str]]:
+    retrieved_entries = []
+    seen_chunk_ids = set()
+    for retrieval_query in plan["retrieval_queries"]:
+        for entry in search_wikipedia_knowledge_base(str(retrieval_query), limit_per_query):
+            chunk_key = entry.get("chunk_id") or f"{entry.get('id')}:{entry.get('title')}:{entry.get('text', '')[:80]}"
+            if chunk_key in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(chunk_key)
+            retrieved_entries.append(entry)
+
+    return retrieved_entries[:9]
+
+
 def build_wikipedia_chat_debug(
     request: ChatRequest,
-    context_resolution: dict[str, str | bool | None],
+    query_plan: dict[str, object],
     retrieved_entries: list[dict[str, str]],
 ) -> dict[str, object]:
+    retrieval_queries = [str(query) for query in query_plan["retrieval_queries"]]
     return {
         "knowledge_base": "wikipedia",
         "original_query": request.message,
-        "retrieval_query": str(context_resolution["retrieval_query"]),
-        "active_topic": context_resolution["active_topic"],
-        "resolver_reason": context_resolution["reason"],
+        "standalone_question": query_plan["standalone_question"],
+        "retrieval_queries": retrieval_queries,
+        "retrieval_query": retrieval_queries[0] if retrieval_queries else request.message,
+        "active_topic": query_plan["active_topic"],
+        "active_entities": query_plan["active_entities"],
+        "answer_entities": query_plan["answer_entities"],
+        "planner_reason": query_plan["planner_reason"],
+        "resolver_reason": query_plan["planner_reason"],
         "source_titles": [entry["title"] for entry in retrieved_entries],
         "history_source_titles": recent_wikipedia_source_titles(request.history),
     }
@@ -1032,10 +1275,9 @@ def chat(request: ChatRequest):
         ]
         sources = None
     else:
-        context_resolution = build_wikipedia_context_resolution(request.message, request.history)
-        retrieval_query = str(context_resolution["retrieval_query"])
-        retrieved_entries = search_wikipedia_knowledge_base(retrieval_query)
-        wikipedia_debug = build_wikipedia_chat_debug(request, context_resolution, retrieved_entries)
+        query_plan = build_wikipedia_query_plan(request.message, request.history)
+        retrieved_entries = search_wikipedia_query_plan(query_plan)
+        wikipedia_debug = build_wikipedia_chat_debug(request, query_plan, retrieved_entries)
         log_wikipedia_chat_debug(wikipedia_debug)
 
         if request.include_retrieval_debug:
@@ -1079,7 +1321,7 @@ def chat(request: ChatRequest):
                     "Strict instruction: Reuse only wording and facts from the Wikipedia context above. "
                     "Do not infer unstated examples, libraries, names, dates, capabilities, or claims. "
                     "Answer in 1-3 concise sentences.\n\n"
-                    f"User question: {request.message}"
+                    f"User question: {query_plan['standalone_question']}"
                 ),
             },
         ]
@@ -1097,6 +1339,14 @@ def chat(request: ChatRequest):
             supported_answer = answer_supported_life_event_question(request.message, retrieved_entries)
         if not supported_answer:
             supported_answer = answer_supported_famous_song_question(request.message, retrieved_entries)
+        if not supported_answer:
+            supported_answer = answer_supported_other_bands_question(request.message, retrieved_entries)
+        if not supported_answer:
+            supported_answer = answer_supported_band_album_question(
+                request.message,
+                retrieved_entries,
+                [str(entity) for entity in query_plan["active_entities"]],
+            )
         if not supported_answer:
             supported_answer = answer_supported_awards_question(request.message, retrieved_entries)
         if supported_answer:

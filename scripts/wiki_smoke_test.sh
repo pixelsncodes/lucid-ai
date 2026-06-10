@@ -82,6 +82,53 @@ print(json.dumps(body, separators=(",", ":")))
 PY
 }
 
+build_followup_body() {
+  local message=$1
+  local history_json=$2
+
+  FOLLOWUP_MESSAGE="$message" HISTORY_JSON="$history_json" python3 - <<'PY'
+import json
+import os
+
+body = {
+    "message": os.environ["FOLLOWUP_MESSAGE"],
+    "knowledge_base": "wikipedia",
+    "history": json.loads(os.environ["HISTORY_JSON"]),
+}
+print(json.dumps(body, separators=(",", ":")))
+PY
+}
+
+append_history_turn() {
+  local history_json=$1
+  local user_message=$2
+  local assistant_json=$3
+
+  HISTORY_JSON="$history_json" USER_MESSAGE="$user_message" ASSISTANT_JSON="$assistant_json" python3 - <<'PY'
+import json
+import os
+
+history = json.loads(os.environ["HISTORY_JSON"])
+assistant_payload = json.loads(os.environ["ASSISTANT_JSON"])
+source_titles = [
+    source.get("title")
+    for source in assistant_payload.get("sources", [])
+    if isinstance(source, dict) and source.get("title")
+]
+history.extend(
+    [
+        {"role": "user", "content": os.environ["USER_MESSAGE"]},
+        {
+            "role": "assistant",
+            "content": assistant_payload.get("reply", ""),
+            "source_titles": source_titles[:5],
+        },
+    ]
+)
+print(json.dumps(history, separators=(",", ":")))
+PY
+}
+
 run_json_check() {
   local label=$1
   local json=$2
@@ -215,11 +262,35 @@ elif check == "chat_michael_jackson_grammy_count":
 elif check == "chat_tool_other_bands_followup":
     reply = payload.get("reply", "")
     sources = payload.get("sources")
+    debug = payload.get("debug", {})
     source_text = json.dumps(sources, ensure_ascii=False).lower()
     lowered_reply = reply.lower()
     ok = (
         isinstance(reply, str)
         and ("a perfect circle" in lowered_reply or "puscifer" in lowered_reply)
+        and "maynard-james-keenan" in source_text
+        and debug.get("retrieval_queries") == ["Maynard James Keenan other bands"]
+        and debug.get("active_topic") == "Maynard James Keenan"
+        and debug.get("planner_reason") == "entity_follow_up_other_bands"
+        and unknown_answer not in reply
+        and isinstance(sources, list)
+        and bool(sources)
+    )
+elif check == "chat_tool_albums_followup":
+    reply = payload.get("reply", "")
+    sources = payload.get("sources")
+    debug = payload.get("debug", {})
+    lowered_reply = reply.lower()
+    source_text = json.dumps(sources, ensure_ascii=False).lower()
+    ok = (
+        isinstance(reply, str)
+        and "tool albums" in " ".join(debug.get("retrieval_queries", [])).lower()
+        and debug.get("retrieval_queries") == ["Tool albums", "A Perfect Circle albums", "Puscifer albums"]
+        and debug.get("active_topic") == "Maynard James Keenan"
+        and debug.get("active_entities") == ["Tool", "A Perfect Circle", "Puscifer"]
+        and debug.get("planner_reason") == "plural_follow_up_from_recent_answer"
+        and "tool" in lowered_reply
+        and "a perfect circle" in lowered_reply
         and "maynard-james-keenan" in source_text
         and unknown_answer not in reply
         and isinstance(sources, list)
@@ -369,12 +440,52 @@ else
   fail "/chat Wikipedia Tool singer other bands follow-up request"
 fi
 
+tool_history='[]'
+chat_tool_singer_body='{"message":"Who is the singer for the band Tool?","knowledge_base":"wikipedia"}'
+chat_tool_singer=$(curl_json POST "$backend_url/chat" "$chat_tool_singer_body" || true)
+if [[ -n "$chat_tool_singer" ]]; then
+  tool_history=$(append_history_turn "$tool_history" "Who is the singer for the band Tool?" "$chat_tool_singer")
+else
+  fail "/chat Wikipedia Tool singer request"
+fi
+
+if [[ -n "$chat_tool_singer" ]]; then
+  chat_tool_it_bands_body=$(build_followup_body "Does it work with any other bands?" "$tool_history")
+  chat_tool_it_bands=$(curl_json POST "$backend_url/chat" "$chat_tool_it_bands_body" || true)
+  if [[ -n "$chat_tool_it_bands" ]]; then
+    run_json_check "/chat Wikipedia Tool it-to-Maynard other bands" "$chat_tool_it_bands" "chat_tool_other_bands_followup"
+    tool_history=$(append_history_turn "$tool_history" "Does it work with any other bands?" "$chat_tool_it_bands")
+  else
+    fail "/chat Wikipedia Tool it-to-Maynard other bands request"
+  fi
+fi
+
+if [[ -n "${chat_tool_it_bands:-}" ]]; then
+  chat_tool_albums_body=$(build_followup_body "Can you list their albums?" "$tool_history")
+  chat_tool_albums=$(curl_json POST "$backend_url/chat" "$chat_tool_albums_body" || true)
+  if [[ -n "$chat_tool_albums" ]]; then
+    run_json_check "/chat Wikipedia Tool related-band albums follow-up" "$chat_tool_albums" "chat_tool_albums_followup"
+  else
+    fail "/chat Wikipedia Tool related-band albums follow-up request"
+  fi
+fi
+
 chat_canada_after_michael_jackson_body='{"message":"What is the capital of Canada?","knowledge_base":"wikipedia","history":[{"role":"user","content":"Tell me about Michael Jackson."},{"role":"assistant","content":"Michael Joseph Jackson was an American singer, songwriter, dancer, and philanthropist.","source_titles":["Michael Jackson"]}]}'
 chat_canada_after_michael_jackson=$(curl_json POST "$backend_url/chat" "$chat_canada_after_michael_jackson_body" || true)
 if [[ -n "$chat_canada_after_michael_jackson" ]]; then
   run_json_check "/chat Wikipedia Canada after Michael Jackson stays standalone" "$chat_canada_after_michael_jackson" "chat_canada_after_michael_jackson"
 else
   fail "/chat Wikipedia Canada after Michael Jackson request"
+fi
+
+if [[ -n "${tool_history:-}" && "$tool_history" != "[]" ]]; then
+  chat_canada_after_tool_body=$(build_followup_body "What is the capital of Canada?" "$tool_history")
+  chat_canada_after_tool=$(curl_json POST "$backend_url/chat" "$chat_canada_after_tool_body" || true)
+  if [[ -n "$chat_canada_after_tool" ]]; then
+    run_json_check "/chat Wikipedia Canada after Tool stays standalone" "$chat_canada_after_tool" "chat_canada_after_michael_jackson"
+  else
+    fail "/chat Wikipedia Canada after Tool request"
+  fi
 fi
 
 chat_atlantis_body='{"message":"What is the capital of Atlantis?","knowledge_base":"wikipedia"}'
@@ -391,6 +502,16 @@ if [[ -n "$chat_atlantis_after_tool" ]]; then
   run_json_check "/chat Wikipedia Atlantis after Tool unknown answer" "$chat_atlantis_after_tool" "chat_atlantis"
 else
   fail "/chat Wikipedia Atlantis after Tool request"
+fi
+
+if [[ -n "${tool_history:-}" && "$tool_history" != "[]" ]]; then
+  chat_atlantis_after_tool_chain_body=$(build_followup_body "What is the capital of Atlantis?" "$tool_history")
+  chat_atlantis_after_tool_chain=$(curl_json POST "$backend_url/chat" "$chat_atlantis_after_tool_chain_body" || true)
+  if [[ -n "$chat_atlantis_after_tool_chain" ]]; then
+    run_json_check "/chat Wikipedia Atlantis after Tool chain unknown answer" "$chat_atlantis_after_tool_chain" "chat_atlantis"
+  else
+    fail "/chat Wikipedia Atlantis after Tool chain request"
+  fi
 fi
 
 echo
