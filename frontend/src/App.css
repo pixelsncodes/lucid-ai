@@ -428,7 +428,7 @@ button {
   display: grid;
   gap: 10px;
   padding: 10px;
-  overflow: hidden;
+  overflow: visible;
   background: rgba(12, 12, 14, 0.98);
   box-shadow: 0 18px 52px rgba(0, 0, 0, 0.34);
 }
@@ -530,8 +530,8 @@ button {
 }
 
 .dock-grid {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.74fr) minmax(116px, 0.42fr) minmax(146px, 0.55fr) auto minmax(142px, auto) auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -539,6 +539,7 @@ button {
 .setting-field,
 .dock-toggle {
   min-width: 0;
+  flex: 1 1 136px;
   min-height: 34px;
   display: flex;
   align-items: center;
@@ -547,6 +548,33 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.016);
+}
+
+.setting-field--model {
+  flex-basis: 190px;
+  flex-grow: 1.45;
+}
+
+.setting-field--voice {
+  flex-basis: 160px;
+  flex-grow: 1;
+}
+
+.setting-field--stepper {
+  flex: 0 1 122px;
+}
+
+#context-input {
+  min-width: 48px;
+}
+
+.dock-toggle {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.dock-toggle .control-label {
+  white-space: nowrap;
 }
 
 .setting-field select,
@@ -960,12 +988,6 @@ button {
   outline-offset: 3px;
 }
 
-@media (max-width: 1040px) {
-  .dock-grid {
-    grid-template-columns: minmax(170px, 1fr) minmax(140px, 0.74fr) minmax(116px, 0.42fr) minmax(148px, 0.55fr) auto minmax(142px, auto) auto;
-  }
-}
-
 @media (max-width: 820px) {
   .lucid-topbar {
     padding-inline: 16px;
@@ -997,13 +1019,9 @@ button {
     gap: 14px;
   }
 
-  .dock-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(116px, 0.45fr);
-  }
-
   .setting-field--model,
   .setting-field--voice {
-    grid-column: auto;
+    flex-basis: 180px;
   }
 
   .transcript-content {
@@ -1055,18 +1073,17 @@ button {
     width: max-content;
   }
 
-  .dock-grid,
   .chat-actions {
     grid-template-columns: 1fr;
   }
 
-  .dock-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
   .setting-field--model,
   .setting-field--voice {
-    grid-column: 1 / -1;
+    flex-basis: 100%;
+  }
+
+  .setting-field--stepper {
+    flex: 1 1 112px;
   }
 
   .exchange-row {
