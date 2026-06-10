@@ -12,7 +12,34 @@ TTS_VOICES = [
         "model_path": "models/piper/en_US-lessac-medium.onnx",
         "config_path": "models/piper/en_US-lessac-medium.onnx.json",
         "description": "Default US English Piper voice.",
-    }
+    },
+    {
+        "id": "amy-medium",
+        "name": "Amy Medium",
+        "engine": "piper",
+        "language": "en-US",
+        "model_path": "models/piper/en_US-amy-medium.onnx",
+        "config_path": "models/piper/en_US-amy-medium.onnx.json",
+        "description": "US English Piper voice.",
+    },
+    {
+        "id": "ryan-medium",
+        "name": "Ryan Medium",
+        "engine": "piper",
+        "language": "en-US",
+        "model_path": "models/piper/en_US-ryan-medium.onnx",
+        "config_path": "models/piper/en_US-ryan-medium.onnx.json",
+        "description": "US English Piper voice.",
+    },
+    {
+        "id": "alba-medium",
+        "name": "Alba Medium",
+        "engine": "piper",
+        "language": "en-GB",
+        "model_path": "models/piper/en_GB-alba-medium.onnx",
+        "config_path": "models/piper/en_GB-alba-medium.onnx.json",
+        "description": "British English Piper voice.",
+    },
 ]
 
 

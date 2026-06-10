@@ -4,6 +4,8 @@ __pycache__/
 
 # Local downloaded models
 backend/models/
+backend/models/piper/*.onnx
+backend/models/piper/*.onnx.json
 
 # Generated local Wikipedia index
 backend/data/wikipedia/*.sqlite3
