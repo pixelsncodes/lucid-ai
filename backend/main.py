@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import requests
 
-from wiki_store import query_terms, search_index
+from wiki_store import query_terms, required_title_terms, search_index, search_index_multi
 
 from config import (
     DEFAULT_NUM_CTX,
@@ -21,6 +21,7 @@ from config import (
     OLLAMA_BASE_URL,
     OLLAMA_CHAT_ENDPOINT,
     OLLAMA_MODEL,
+    PLANNER_MODE,
     STT_COMPUTE_TYPE,
     STT_DEVICE,
     STT_LANGUAGE,
@@ -323,6 +324,10 @@ def score_wikipedia_articles(query: str, limit: int = 3) -> list[dict]:
 
 def search_wikipedia_knowledge_base(query: str, limit: int = 3) -> list[dict[str, str]]:
     return search_index(query, limit)
+
+
+def search_wikipedia_knowledge_base_multi(queries: list[str]) -> list[dict[str, str]]:
+    return search_index_multi(queries, limit_per_query=2, total_limit=5)
 
 
 def build_wikipedia_context(entries: list[dict[str, str]]) -> str:
@@ -641,6 +646,13 @@ GENERAL_FOLLOW_UP_PATTERNS = [
     (
         re.compile(r"^\s*how\s+many\b", re.IGNORECASE),
         "context_phrase_follow_up",
+    ),
+    (
+        re.compile(
+            r"^\s*(?:and|but|also)\s+(?:the|his|her|its|their|a|an)?\s*\w",
+            re.IGNORECASE,
+        ),
+        "connector_follow_up",
     ),
 ]
 LIFE_EVENT_FOLLOW_UP_PATTERNS = [
@@ -1052,6 +1064,264 @@ def build_wikipedia_retrieval_query(message: str, history: list[ChatMessage]) ->
     return str(build_wikipedia_context_resolution(message, history)["retrieval_query"])
 
 
+PLANNER_TIMEOUT_SECONDS = 20
+PLANNER_MAX_QUERIES = 4
+PLANNER_MAX_QUERY_LENGTH = 80
+
+WIKIPEDIA_PLANNER_SYSTEM_PROMPT = (
+    "You are a retrieval query planner for an offline Wikipedia search system.\n"
+    "You never answer the user's question and you never state facts.\n"
+    "Your only job is to rewrite the latest user message into standalone Wikipedia search queries.\n"
+    "Rules:\n"
+    "- Use only names and topics that appear in the conversation context. Never introduce new names.\n"
+    "- Resolve pronouns (he, she, it, they, their, them) to the most recently discussed matching "
+    "entity in the context. If the recent context is clearly about a person, treat a stray 'it' "
+    "as that person.\n"
+    "- If the message refers to multiple entities (for example 'their albums' after several bands "
+    "were mentioned), produce one retrieval query per entity, up to 4 queries.\n"
+    "- Each retrieval query must be 2 to 6 words: an entity name plus the attribute asked about.\n"
+    "- Generate queries only for the attribute the user asked about. Do not add queries for other "
+    "aspects (location, history, background) that were not asked.\n"
+    "- Do not generate queries from earlier source titles unless the user's question is about them.\n"
+    "- If the latest message is already standalone, return it unchanged as the single retrieval query.\n"
+    "Respond with only JSON in exactly this shape:\n"
+    '{"standalone_question": "...", "active_topic": "..." , '
+    '"active_entities": ["..."], "retrieval_queries": ["..."], "reason": "..."}'
+)
+
+
+def build_wikipedia_planner_context(message: str, history: list[ChatMessage]) -> str:
+    lines = []
+    for history_message in history[-6:]:
+        line = f"{history_message.role}: {history_message.content[:300]}"
+        if history_message.role == "assistant" and history_message.source_titles:
+            line += f" [sources: {', '.join(history_message.source_titles)}]"
+        lines.append(line)
+    lines.append(f"latest user message: {message}")
+    return "\n".join(lines)
+
+
+def parse_planner_plan(raw: str) -> dict | None:
+    raw = raw.strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+    try:
+        plan = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return plan if isinstance(plan, dict) else None
+
+
+def planner_grounding_blob(message: str, history: list[ChatMessage]) -> str:
+    parts = [message]
+    for history_message in history[-8:]:
+        parts.append(history_message.content)
+        parts.extend(history_message.source_titles)
+    return " ".join(parts).lower()
+
+
+def is_planner_query_grounded(query: str, grounding_blob: str) -> bool:
+    """Every proper-noun-like token in a planner query must appear in the
+    session context. This mechanically prevents the planner from inventing
+    entities; attribute words (albums, born, awards) are lowercase and pass.
+
+    The first word of a query is always capitalised regardless of whether it
+    is a proper noun, so it is excluded from the check to avoid spuriously
+    rejecting attribute-first queries like "Awards won by Marie Curie"."""
+    words = query.strip().split()
+    first_word_lower = words[0].lower() if words else ""
+    for token in re.findall(r"\b[A-Z][A-Za-z0-9'\-]+\b", query):
+        if len(token) <= 2:
+            continue
+        if token.lower() == first_word_lower:
+            continue
+        if token.lower() not in grounding_blob:
+            return False
+    return True
+
+
+def validate_planner_plan(
+    plan: dict,
+    message: str,
+    history: list[ChatMessage],
+    rule_active_topic: str | None = None,
+) -> dict | None:
+    raw_queries = plan.get("retrieval_queries")
+    if not isinstance(raw_queries, list):
+        return None
+
+    # Relevance gate: build a term set from the current message, the plan's
+    # standalone_question, and the rule-resolver's active_topic. Any planner
+    # query that shares zero terms with this set is off-topic (e.g. a stale
+    # source title) and is rejected before it reaches retrieval.
+    relevance_terms: set[str] = set(query_terms(message))
+    raw_sq = plan.get("standalone_question")
+    if isinstance(raw_sq, str) and raw_sq.strip():
+        relevance_terms.update(query_terms(raw_sq))
+    if rule_active_topic:
+        relevance_terms.update(query_terms(rule_active_topic))
+
+    grounding_blob = planner_grounding_blob(message, history)
+    retrieval_queries = []
+    for raw_query in raw_queries:
+        if not isinstance(raw_query, str):
+            continue
+        query = raw_query.strip()
+        if not query or len(query) > PLANNER_MAX_QUERY_LENGTH:
+            continue
+        if not query_terms(query):
+            continue
+        if not is_planner_query_grounded(query, grounding_blob):
+            continue
+        if relevance_terms and not relevance_terms.intersection(set(query_terms(query))):
+            continue
+        if query not in retrieval_queries:
+            retrieval_queries.append(query)
+
+    retrieval_queries = retrieval_queries[:PLANNER_MAX_QUERIES]
+    if not retrieval_queries:
+        return None
+
+    raw_entities = plan.get("active_entities")
+    active_entities = []
+    if isinstance(raw_entities, list):
+        for raw_entity in raw_entities:
+            if not isinstance(raw_entity, str):
+                continue
+            entity = raw_entity.strip()
+            if entity and entity.lower() in grounding_blob and entity not in active_entities:
+                active_entities.append(entity)
+    active_entities = active_entities[:6]
+
+    raw_topic = plan.get("active_topic")
+    active_topic = None
+    if isinstance(raw_topic, str):
+        topic = raw_topic.strip()
+        if topic and topic.lower() in grounding_blob:
+            active_topic = topic
+
+    raw_standalone = plan.get("standalone_question")
+    standalone_question = (
+        raw_standalone.strip()
+        if isinstance(raw_standalone, str) and raw_standalone.strip()
+        else message
+    )
+
+    raw_reason = plan.get("reason")
+    reason = (
+        raw_reason.strip()[:120]
+        if isinstance(raw_reason, str) and raw_reason.strip()
+        else "planner_follow_up"
+    )
+
+    return {
+        "standalone_question": standalone_question,
+        "active_topic": active_topic,
+        "active_entities": active_entities,
+        "retrieval_queries": retrieval_queries,
+        "reason": reason,
+    }
+
+
+def call_wikipedia_query_planner(
+    message: str,
+    history: list[ChatMessage],
+    model: str,
+    rule_active_topic: str | None = None,
+) -> dict | None:
+    planner_user_prompt = (
+        "Conversation context:\n"
+        f"{build_wikipedia_planner_context(message, history)}\n\n"
+        "Produce the JSON plan for the latest user message. Do not answer the question."
+    )
+    try:
+        response = requests.post(
+            OLLAMA_CHAT_ENDPOINT,
+            json={
+                "model": model,
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.0, "num_ctx": 2048, "seed": 42},
+                "messages": [
+                    {"role": "system", "content": WIKIPEDIA_PLANNER_SYSTEM_PROMPT},
+                    {"role": "user", "content": planner_user_prompt},
+                ],
+            },
+            timeout=PLANNER_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        raw_content = response.json()["message"]["content"]
+    except (requests.RequestException, KeyError, ValueError, TypeError):
+        return None
+
+    plan = parse_planner_plan(raw_content)
+    if plan is None:
+        return None
+    return validate_planner_plan(plan, message, history, rule_active_topic)
+
+
+def plan_wikipedia_retrieval(
+    message: str,
+    history: list[ChatMessage],
+    model: str,
+) -> dict[str, object]:
+    """Planner-first resolution for follow-ups, with the rule-based resolver
+    as the deterministic fallback. Standalone questions never touch the
+    planner, which keeps capital-city and other standalone behavior
+    deterministic and avoids an extra model call."""
+    query_plan = build_wikipedia_query_plan(message, history)
+    retrieval_queries = list(query_plan["retrieval_queries"])
+    resolution: dict[str, object] = {
+        **query_plan,
+        "retrieval_query": retrieval_queries[0] if retrieval_queries else message,
+        "planner_used": False,
+    }
+
+    run_planner = bool(query_plan["is_follow_up"])
+    if PLANNER_MODE == "always" and history:
+        run_planner = True
+
+    if not run_planner:
+        return resolution
+
+    validated_plan = call_wikipedia_query_planner(
+        message, history, model, rule_active_topic=query_plan["active_topic"]
+    )
+    if not validated_plan:
+        return resolution
+
+    # In "always" mode, standalone questions that carry a required-title
+    # constraint (e.g. "capital of X") depend on the exact query string to
+    # activate the title filter inside search_index. A planner rewrite like
+    # "Atlantis capital" loses that filter and can return unrelated articles.
+    # Keep the rule-based query for these cases.
+    if not query_plan["is_follow_up"] and required_title_terms(message):
+        return resolution
+
+    planner_queries = validated_plan["retrieval_queries"]
+
+    # Fix 2: when the rule resolver fired a deterministic life-event or intent
+    # mapping, its query uses exact vocabulary that matches the index (e.g.
+    # "born" not "birthdate"). Prepend it so retrieval always sees it first,
+    # then append any planner extras, capped at PLANNER_MAX_QUERIES total.
+    if wikipedia_life_event_follow_up_terms(message) or wikipedia_follow_up_intent_terms(message):
+        rule_first = str(query_plan["retrieval_queries"][0]) if query_plan["retrieval_queries"] else None
+        if rule_first:
+            merged = [rule_first] + [q for q in planner_queries if q != rule_first]
+            planner_queries = merged[:PLANNER_MAX_QUERIES]
+
+    resolution.update(
+        {
+            "retrieval_query": planner_queries[0],
+            "retrieval_queries": planner_queries,
+            "standalone_question": validated_plan["standalone_question"],
+            "active_entities": validated_plan["active_entities"] or query_plan["active_entities"],
+            "planner_used": True,
+        }
+    )
+    return resolution
+
+
 def search_wikipedia_query_plan(plan: dict[str, object], limit_per_query: int = 3) -> list[dict[str, str]]:
     retrieved_entries = []
     seen_chunk_ids = set()
@@ -1083,6 +1353,7 @@ def build_wikipedia_chat_debug(
         "answer_entities": query_plan["answer_entities"],
         "planner_reason": query_plan["planner_reason"],
         "resolver_reason": query_plan["planner_reason"],
+        "planner_used": bool(query_plan.get("planner_used", False)),
         "source_titles": [entry["title"] for entry in retrieved_entries],
         "history_source_titles": recent_wikipedia_source_titles(request.history),
     }
@@ -1275,8 +1546,10 @@ def chat(request: ChatRequest):
         ]
         sources = None
     else:
-        query_plan = build_wikipedia_query_plan(request.message, request.history)
-        retrieved_entries = search_wikipedia_query_plan(query_plan)
+        query_plan = plan_wikipedia_retrieval(request.message, request.history, selected_model)
+        retrieved_entries = search_wikipedia_knowledge_base_multi(
+            [str(q) for q in query_plan["retrieval_queries"]]
+        )
         wikipedia_debug = build_wikipedia_chat_debug(request, query_plan, retrieved_entries)
         log_wikipedia_chat_debug(wikipedia_debug)
 
@@ -1301,6 +1574,12 @@ def chat(request: ChatRequest):
             f"If the provided context does not contain the answer, say exactly: {UNKNOWN_WIKIPEDIA_ANSWER}"
         )
         wikipedia_context = build_wikipedia_context(retrieved_entries)
+        standalone_question = str(query_plan.get("standalone_question") or request.message)
+        interpreted_line = (
+            f"\n(Interpreted in conversation context as: {standalone_question})"
+            if query_plan.get("planner_used") and standalone_question != request.message
+            else ""
+        )
         messages = [
             {
                 "role": "system",
@@ -1321,7 +1600,7 @@ def chat(request: ChatRequest):
                     "Strict instruction: Reuse only wording and facts from the Wikipedia context above. "
                     "Do not infer unstated examples, libraries, names, dates, capabilities, or claims. "
                     "Answer in 1-3 concise sentences.\n\n"
-                    f"User question: {query_plan['standalone_question']}"
+                    f"User question: {request.message}{interpreted_line}"
                 ),
             },
         ]

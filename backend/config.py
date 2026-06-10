@@ -1,3 +1,5 @@
+import os
+
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_CHAT_ENDPOINT = f"{OLLAMA_BASE_URL}/api/chat"
 OLLAMA_MODEL = "llama3.2:3b"
@@ -8,6 +10,8 @@ STT_MODEL = "small"
 STT_DEVICE = "cuda"
 STT_COMPUTE_TYPE = "float16"
 STT_LANGUAGE = "en"
+
+PLANNER_MODE = os.getenv("PLANNER_MODE", "follow_up")
 
 TTS_MODEL_PATH = "models/piper/en_US-lessac-medium.onnx"
 TTS_MAX_TEXT_LENGTH = 2000

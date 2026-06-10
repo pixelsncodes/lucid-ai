@@ -73,6 +73,11 @@ FTS_STOP_WORDS = {
     "please",
     "many",
     "much",
+    "list",
+    "lists",
+    "show",
+    "give",
+    "some",
 }
 
 
@@ -212,13 +217,50 @@ def is_useful_chunk(text: str) -> bool:
     return word_count >= 8
 
 
+def fts_term_variants(term: str) -> list[str]:
+    """Expand a query term into singular/plural variants.
+
+    The FTS index has no stemming, so "album" and "albums" are different
+    tokens. Matching either variant keeps recall stable for natural queries.
+    """
+    variants = [term]
+    if not term.isalpha():
+        return variants
+
+    if len(term) > 4 and term.endswith("ies"):
+        variants.append(f"{term[:-3]}y")
+    elif len(term) > 3 and term.endswith("s") and not term.endswith("ss"):
+        variants.append(term[:-1])
+    else:
+        if len(term) > 2 and term.endswith("y"):
+            variants.append(f"{term[:-1]}ies")
+        variants.append(f"{term}s")
+
+    deduped = []
+    for variant in variants:
+        if variant and variant not in deduped:
+            deduped.append(variant)
+    return deduped
+
+
+def build_fts_query_from_terms(terms: list[str]) -> str:
+    groups = []
+    for term in terms:
+        variants = fts_term_variants(term)
+        if len(variants) == 1:
+            groups.append(variants[0])
+        else:
+            groups.append(f"({' OR '.join(variants)})")
+    return " AND ".join(groups)
+
+
 def build_fts_query(query: str) -> str:
     terms = query_terms(query)
 
     if not terms:
         return ""
 
-    return " AND ".join(sorted(set(terms)))
+    return build_fts_query_from_terms(terms)
 
 
 def query_terms(query: str) -> list[str]:
@@ -227,7 +269,7 @@ def query_terms(query: str) -> list[str]:
     for term in terms:
         if len(term) <= 1 or term in FTS_STOP_WORDS:
             continue
-        if term == "birth":
+        if term in ("birth", "birthdate", "birthday"):
             term = "born"
         if term not in normalized_terms:
             normalized_terms.append(term)
@@ -343,35 +385,57 @@ def rebuild_index(
     }
 
 
+def run_fts_search(conn: sqlite3.Connection, fts_query: str, search_limit: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT
+            chunks.id,
+            chunks.article_id,
+            chunks.title,
+            chunks.text,
+            chunks.chunk_index,
+            bm25(chunks_fts, 5.0, 1.0) AS score
+        FROM chunks_fts
+        JOIN chunks ON chunks_fts.rowid = chunks.rowid
+        WHERE chunks_fts MATCH ?
+        ORDER BY score
+        LIMIT ?
+        """,
+        (fts_query, search_limit),
+    ).fetchall()
+
+
 def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PATH) -> list[dict[str, str]]:
     query = query.strip()
     terms = query_terms(query)
-    fts_query = build_fts_query(query)
     required_terms = required_title_terms(query)
     search_limit = min(500, max(limit * 50, 100))
 
-    if not fts_query or not index_path.exists():
+    if not terms or not index_path.exists():
         return []
 
+    filtered_rows: list[sqlite3.Row] = []
     with connect(index_path) as conn:
         initialize_index(conn)
-        rows = conn.execute(
-            """
-            SELECT
-                chunks.id,
-                chunks.article_id,
-                chunks.title,
-                chunks.text,
-                chunks.chunk_index,
-                bm25(chunks_fts, 5.0, 1.0) AS score
-            FROM chunks_fts
-            JOIN chunks ON chunks_fts.rowid = chunks.rowid
-            WHERE chunks_fts MATCH ?
-            ORDER BY score
-            LIMIT ?
-            """,
-            (fts_query, search_limit),
-        ).fetchall()
+
+        # Relaxation ladder: start with all terms ANDed. Retrieval queries put
+        # the topic first and intent terms last, so if a strict query matches
+        # nothing, drop trailing terms (down to a floor of 2) instead of
+        # returning zero rows. Returning the topic's chunks lets the grounded
+        # answer layer respond cautiously instead of falsely claiming the
+        # knowledgebase has nothing.
+        attempt_terms = list(terms)
+        while attempt_terms:
+            rows = run_fts_search(conn, build_fts_query_from_terms(attempt_terms), search_limit)
+            filtered_rows = [
+                row
+                for row in rows
+                if title_matches_required_terms(row["title"], required_terms)
+                and is_useful_chunk(row["text"])
+            ]
+            if filtered_rows or len(attempt_terms) <= 2:
+                break
+            attempt_terms = attempt_terms[:-1]
 
     results = [
         {
@@ -383,9 +447,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
             "score": row["score"],
             "_title_rank": title_rank(row["title"], query, terms),
         }
-        for row in rows
-        if title_matches_required_terms(row["title"], required_terms)
-        and is_useful_chunk(row["text"])
+        for row in filtered_rows
     ]
 
     results.sort(
@@ -405,3 +467,40 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
         }
         for result in results[:limit]
     ]
+
+
+def search_index_multi(
+    queries: list[str],
+    limit_per_query: int = 2,
+    total_limit: int = 6,
+    index_path: Path = DEFAULT_INDEX_PATH,
+) -> list[dict[str, str]]:
+    """Run several retrieval queries and merge results, deduped by chunk.
+
+    Used when the query planner fans a follow-up out into one query per
+    entity (e.g. albums for each of several bands). A single query behaves
+    exactly like search_index with the default limit.
+    """
+    cleaned_queries = []
+    for query in queries:
+        query = query.strip()
+        if query and query not in cleaned_queries:
+            cleaned_queries.append(query)
+
+    if not cleaned_queries:
+        return []
+
+    if len(cleaned_queries) == 1:
+        return search_index(cleaned_queries[0], limit=3, index_path=index_path)
+
+    merged: list[dict[str, str]] = []
+    seen_chunk_ids: set[str] = set()
+    for query in cleaned_queries:
+        for entry in search_index(query, limit=limit_per_query, index_path=index_path):
+            chunk_id = entry.get("chunk_id")
+            if chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(chunk_id)
+            merged.append(entry)
+
+    return merged[:total_limit]
