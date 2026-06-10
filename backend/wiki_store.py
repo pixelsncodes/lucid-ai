@@ -152,6 +152,30 @@ def split_long_text(text: str, max_chars: int, overlap_chars: int) -> list[str]:
     return chunks
 
 
+def required_title_terms(query: str) -> list[str]:
+    lowered = query.lower()
+    match = re.search(r"\bcapital\s+of\s+([a-zA-Z][a-zA-Z\s-]+)", lowered)
+    if not match:
+        return []
+
+    subject = match.group(1)
+    subject = re.sub(r"[^a-zA-Z\s-]", " ", subject)
+    terms = [
+        term
+        for term in re.findall(r"[a-zA-Z]+", subject)
+        if len(term) > 2 and term not in FTS_STOP_WORDS
+    ]
+    return terms[:3]
+
+
+def title_matches_required_terms(title: str, required_terms: list[str]) -> bool:
+    if not required_terms:
+        return True
+
+    title_terms = set(re.findall(r"[a-zA-Z0-9]+", title.lower()))
+    return all(term in title_terms for term in required_terms)
+
+
 def build_fts_query(query: str) -> str:
     terms = re.findall(r"[a-zA-Z0-9]+", query.lower())
     terms = [
@@ -252,6 +276,9 @@ def rebuild_index(
 def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PATH) -> list[dict[str, str]]:
     query = query.strip()
     fts_query = build_fts_query(query)
+    required_terms = required_title_terms(query)
+    search_limit = max(limit, limit * 10 if required_terms else limit)
+
     if not fts_query or not index_path.exists():
         return []
 
@@ -271,10 +298,10 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
             ORDER BY score
             LIMIT ?
             """,
-            (fts_query, limit),
+            (fts_query, search_limit),
         ).fetchall()
 
-    return [
+    results = [
         {
             "id": row["article_id"],
             "chunk_id": row["id"],
@@ -283,4 +310,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
             "score": row["score"],
         }
         for row in rows
+        if title_matches_required_terms(row["title"], required_terms)
     ]
+
+    return results[:limit]
