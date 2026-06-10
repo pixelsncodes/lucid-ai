@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import requests
 
+from wiki_store import search_index
+
 from config import (
     DEFAULT_NUM_CTX,
     DEFAULT_TEMPERATURE,
@@ -116,8 +118,8 @@ KNOWLEDGE_BASES = [
     },
     {
         "id": "wikipedia",
-        "name": "Local Mini Wikipedia",
-        "description": "Use a tiny local Wikipedia-style knowledgebase for RAG plumbing tests.",
+        "name": "Local Wikipedia",
+        "description": "Use the local offline Wikipedia SQLite index.",
     },
 ]
 
@@ -289,10 +291,7 @@ def score_wikipedia_articles(query: str, limit: int = 3) -> list[dict]:
 
 
 def search_wikipedia_knowledge_base(query: str, limit: int = 3) -> list[dict[str, str]]:
-    return [
-        scored_entry["entry"]
-        for scored_entry in score_wikipedia_articles(query, limit)
-    ]
+    return search_index(query, limit)
 
 
 def build_wikipedia_context(entries: list[dict[str, str]]) -> str:
@@ -358,14 +357,11 @@ def search_rag(
     if not query:
         raise HTTPException(status_code=422, detail="q must not be empty")
 
-    scored_entries = score_wikipedia_articles(query, limit)
+    results = search_wikipedia_knowledge_base(query, limit)
     return {
         "knowledge_base": knowledge_base,
         "query": query,
-        "results": [
-            build_retrieval_debug_entry(scored_entry)
-            for scored_entry in scored_entries
-        ],
+        "results": results,
     }
 
 
@@ -480,18 +476,10 @@ def chat(request: ChatRequest):
         ]
         sources = None
     else:
+        retrieved_entries = search_wikipedia_knowledge_base(request.message)
+
         if request.include_retrieval_debug:
-            scored_entries = score_wikipedia_articles(request.message)
-            retrieved_entries = [
-                scored_entry["entry"]
-                for scored_entry in scored_entries
-            ]
-            retrieval_debug = [
-                build_retrieval_debug_entry(scored_entry)
-                for scored_entry in scored_entries
-            ]
-        else:
-            retrieved_entries = search_wikipedia_knowledge_base(request.message)
+            retrieval_debug = retrieved_entries
 
         if not retrieved_entries:
             response = {"reply": UNKNOWN_WIKIPEDIA_ANSWER, "sources": []}
@@ -536,7 +524,11 @@ def chat(request: ChatRequest):
             },
         ]
         sources = [
-            {"id": entry["id"], "title": entry["title"]}
+            {
+                "id": entry["id"],
+                "title": entry["title"],
+                "chunk_id": entry.get("chunk_id"),
+            }
             for entry in retrieved_entries
         ]
 

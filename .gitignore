@@ -4,3 +4,12 @@ __pycache__/
 
 # Local downloaded models
 backend/models/
+
+# Generated local Wikipedia index
+backend/data/wikipedia/*.sqlite3
+
+# Local Wikipedia imports/dumps
+backend/data/wikipedia/*.xml
+backend/data/wikipedia/*.xml.bz2
+backend/data/wikipedia/*.jsonl
+backend/data/wikipedia/imported-*.json

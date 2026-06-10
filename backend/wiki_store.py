@@ -1,0 +1,262 @@
+import json
+import re
+import sqlite3
+from pathlib import Path
+
+BASE_DIR = Path(__file__).parent
+WIKIPEDIA_DIR = BASE_DIR / "data" / "wikipedia"
+DEFAULT_ARTICLES_PATH = WIKIPEDIA_DIR / "articles.json"
+DEFAULT_INDEX_PATH = WIKIPEDIA_DIR / "wikipedia.sqlite3"
+
+
+FTS_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "about",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "how",
+    "in",
+    "into",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "used",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+}
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "article"
+
+
+def load_articles(path: Path = DEFAULT_ARTICLES_PATH) -> list[dict[str, str]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    articles = []
+    for index, entry in enumerate(data, start=1):
+        if not isinstance(entry, dict):
+            continue
+
+        title = str(entry.get("title", "")).strip()
+        text = str(entry.get("text", "")).strip()
+        article_id = str(entry.get("id", "")).strip() or slugify(title) or f"article-{index}"
+
+        if not title or not text:
+            continue
+
+        articles.append(
+            {
+                "id": article_id,
+                "title": title,
+                "text": text,
+            }
+        )
+
+    return articles
+
+
+def chunk_text(text: str, max_chars: int = 900, overlap_chars: int = 150) -> list[str]:
+    paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n", text) if paragraph.strip()]
+    if not paragraphs:
+        paragraphs = [text.strip()]
+
+    chunks = []
+    current = ""
+
+    for paragraph in paragraphs:
+        if not current:
+            current = paragraph
+        elif len(current) + 2 + len(paragraph) <= max_chars:
+            current = f"{current}\n\n{paragraph}"
+        else:
+            chunks.extend(split_long_text(current, max_chars, overlap_chars))
+            current = paragraph
+
+    if current:
+        chunks.extend(split_long_text(current, max_chars, overlap_chars))
+
+    return chunks
+
+
+def split_long_text(text: str, max_chars: int, overlap_chars: int) -> list[str]:
+    text = text.strip()
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + max_chars, len(text))
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        if end >= len(text):
+            break
+        start = max(0, end - overlap_chars)
+
+    return chunks
+
+
+def build_fts_query(query: str) -> str:
+    terms = re.findall(r"[a-zA-Z0-9]+", query.lower())
+    terms = [
+        term
+        for term in terms
+        if len(term) > 1 and term not in FTS_STOP_WORDS
+    ]
+
+    if not terms:
+        return ""
+
+    return " AND ".join(sorted(set(terms)))
+
+
+def connect(index_path: Path = DEFAULT_INDEX_PATH) -> sqlite3.Connection:
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(index_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def initialize_index(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS articles (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            text TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS chunks (
+            id TEXT PRIMARY KEY,
+            article_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            text TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            FOREIGN KEY(article_id) REFERENCES articles(id)
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+            title,
+            text,
+            content='chunks',
+            content_rowid='rowid'
+        );
+        """
+    )
+    conn.commit()
+
+
+def rebuild_index(
+    articles_path: Path = DEFAULT_ARTICLES_PATH,
+    index_path: Path = DEFAULT_INDEX_PATH,
+) -> dict[str, int]:
+    articles = load_articles(articles_path)
+
+    with connect(index_path) as conn:
+        initialize_index(conn)
+        conn.executescript(
+            """
+            DELETE FROM chunks_fts;
+            DELETE FROM chunks;
+            DELETE FROM articles;
+            """
+        )
+
+        chunk_count = 0
+        for article in articles:
+            conn.execute(
+                "INSERT INTO articles (id, title, text) VALUES (?, ?, ?)",
+                (article["id"], article["title"], article["text"]),
+            )
+
+            for chunk_index, chunk in enumerate(chunk_text(article["text"])):
+                chunk_id = f"{article['id']}:{chunk_index}"
+                cursor = conn.execute(
+                    """
+                    INSERT INTO chunks (id, article_id, title, text, chunk_index)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (chunk_id, article["id"], article["title"], chunk, chunk_index),
+                )
+                rowid = cursor.lastrowid
+                conn.execute(
+                    "INSERT INTO chunks_fts(rowid, title, text) VALUES (?, ?, ?)",
+                    (rowid, article["title"], chunk),
+                )
+                chunk_count += 1
+
+        conn.commit()
+
+    return {
+        "articles": len(articles),
+        "chunks": chunk_count,
+    }
+
+
+def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PATH) -> list[dict[str, str]]:
+    query = query.strip()
+    fts_query = build_fts_query(query)
+    if not fts_query or not index_path.exists():
+        return []
+
+    with connect(index_path) as conn:
+        initialize_index(conn)
+        rows = conn.execute(
+            """
+            SELECT
+                chunks.id,
+                chunks.article_id,
+                chunks.title,
+                chunks.text,
+                bm25(chunks_fts, 5.0, 1.0) AS score
+            FROM chunks_fts
+            JOIN chunks ON chunks_fts.rowid = chunks.rowid
+            WHERE chunks_fts MATCH ?
+            ORDER BY score
+            LIMIT ?
+            """,
+            (fts_query, limit),
+        ).fetchall()
+
+    return [
+        {
+            "id": row["article_id"],
+            "chunk_id": row["id"],
+            "title": row["title"],
+            "text": row["text"],
+            "score": row["score"],
+        }
+        for row in rows
+    ]
