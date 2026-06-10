@@ -1,4 +1,5 @@
 import ctypes
+import json
 import re
 import site
 import subprocess
@@ -25,10 +26,11 @@ from config import (
     SYSTEM_PROMPT,
     TTS_MAX_TEXT_LENGTH,
     TTS_MODEL_PATH,
-    WIKIPEDIA_KNOWLEDGE_BASE,
 )
 
 app = FastAPI(title="LUCID Backend")
+
+WIKIPEDIA_ARTICLES_PATH = Path(__file__).parent / "data" / "wikipedia" / "articles.json"
 
 
 class ChatMessage(BaseModel):
@@ -113,8 +115,8 @@ KNOWLEDGE_BASES = [
     },
     {
         "id": "wikipedia",
-        "name": "Wikipedia Mock",
-        "description": "Use a tiny local mock Wikipedia knowledgebase for RAG plumbing tests.",
+        "name": "Local Mini Wikipedia",
+        "description": "Use a tiny local Wikipedia-style knowledgebase for RAG plumbing tests.",
     },
 ]
 
@@ -139,6 +141,35 @@ RETRIEVAL_STOP_WORDS = {
 }
 
 
+def load_wikipedia_articles(path: Path = WIKIPEDIA_ARTICLES_PATH) -> list[dict[str, str]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    articles = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            return []
+
+        article = {}
+        for field in ("id", "title", "text"):
+            value = entry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                return []
+            article[field] = value.strip()
+
+        articles.append(article)
+
+    return articles
+
+
+WIKIPEDIA_ARTICLES = load_wikipedia_articles()
+
+
 def tokenize_for_retrieval(text: str) -> set[str]:
     return {
         word
@@ -153,7 +184,7 @@ def search_wikipedia_knowledge_base(query: str, limit: int = 3) -> list[dict[str
         return []
 
     scored_entries = []
-    for entry in WIKIPEDIA_KNOWLEDGE_BASE:
+    for entry in WIKIPEDIA_ARTICLES:
         title_words = tokenize_for_retrieval(entry["title"])
         text_words = tokenize_for_retrieval(entry["text"])
         score = (len(query_words & title_words) * 2) + len(query_words & text_words)
