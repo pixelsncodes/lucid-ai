@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import AppShell from './components/AppShell'
+import TopBar from './components/TopBar'
+import VoiceWorkspace from './components/VoiceWorkspace'
 import DotmCircular8 from './components/dotmatrix/DotmCircular8'
 import DotmSquare1 from './components/dotmatrix/DotmSquare1'
 import DotmSquare8 from './components/dotmatrix/DotmSquare8'
@@ -47,7 +50,7 @@ function App() {
   const [conversationMode, setConversationMode] = useState(true)
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState(null)
   const [speechStatus, setSpeechStatus] = useState(null)
-  const [isChatOpen, setIsChatOpen] = useState(false)
+  const [isChatOpen] = useState(true)
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const mediaStreamRef = useRef(null)
@@ -439,7 +442,7 @@ function App() {
   }, [chatMessages])
 
   const voiceStatusLabel = isRecording
-    ? 'Recording'
+    ? 'Listening'
     : isTranscribing
       ? 'Transcribing'
       : isSending
@@ -449,7 +452,7 @@ function App() {
           : 'Idle'
 
   const VoiceLoader =
-    voiceStatusLabel === 'Recording'
+    voiceStatusLabel === 'Listening'
       ? DotmSquare18
       : voiceStatusLabel === 'Transcribing' || voiceStatusLabel === 'Thinking'
         ? DotmSquare8
@@ -458,10 +461,10 @@ function App() {
           : DotmSquare1
   const voiceLoaderSettings = {
     Idle: {
-      boxSize: 70,
-      minSize: 70,
-      dotSize: 8,
-      cellPadding: 4,
+      boxSize: 112,
+      minSize: 112,
+      dotSize: 12,
+      cellPadding: 6,
       speed: 1.45,
       bloom: false,
       halo: 0,
@@ -470,11 +473,11 @@ function App() {
       opacityPeak: 1,
       opacity: 0.86,
     },
-    Recording: {
-      boxSize: 70,
-      minSize: 70,
-      dotSize: 8,
-      cellPadding: 4,
+    Listening: {
+      boxSize: 112,
+      minSize: 112,
+      dotSize: 12,
+      cellPadding: 6,
       speed: 0.74,
       bloom: false,
       halo: 0,
@@ -484,10 +487,10 @@ function App() {
       opacity: 1,
     },
     Transcribing: {
-      boxSize: 70,
-      minSize: 70,
-      dotSize: 8,
-      cellPadding: 4,
+      boxSize: 112,
+      minSize: 112,
+      dotSize: 12,
+      cellPadding: 6,
       speed: 0.9,
       bloom: false,
       halo: 0,
@@ -497,10 +500,10 @@ function App() {
       opacity: 0.94,
     },
     Thinking: {
-      boxSize: 70,
-      minSize: 70,
-      dotSize: 8,
-      cellPadding: 4,
+      boxSize: 112,
+      minSize: 112,
+      dotSize: 12,
+      cellPadding: 6,
       speed: 0.9,
       bloom: false,
       halo: 0,
@@ -510,10 +513,10 @@ function App() {
       opacity: 0.94,
     },
     Speaking: {
-      boxSize: 70,
-      minSize: 70,
-      dotSize: 8,
-      cellPadding: 4,
+      boxSize: 112,
+      minSize: 112,
+      dotSize: 12,
+      cellPadding: 6,
       speed: 0.78,
       bloom: false,
       halo: 0,
@@ -546,264 +549,66 @@ function App() {
       : 'Speak'
 
   return (
-    <main className="lucid-shell">
-      <header className="lucid-topbar">
-        <div>
-          <h1 id="lucid-title" className="lucid-wordmark">LUCID</h1>
-          <p className="lucid-subtitle">Local Unified Conversational Intelligence Desk</p>
-        </div>
-        <div className="topbar-actions">
-          <p className={`backend-status backend-status--${backendStatus}`} aria-live="polite">
-            Backend: {backendStatus}
-          </p>
-          <button
-            type="button"
-            className="chat-toggle"
-            onClick={() => setIsChatOpen((currentValue) => !currentValue)}
-            aria-expanded={isChatOpen}
-            aria-controls="lucid-chat-panel"
-          >
-            {isChatOpen ? 'Hide Chat' : 'Chat'}
-          </button>
-        </div>
-      </header>
-
-      <section className="voice-stage" aria-labelledby="lucid-title">
-        <div className="voice-control">
-          <button
-            type="button"
-            className={`voice-button voice-button--${voiceStatusLabel.toLowerCase()}`}
-            onClick={() => handleToggleRecording('send')}
-            disabled={isVoiceActionDisabled}
-            aria-label={isRecording && recordingMode === 'send' ? 'Stop and send voice' : 'Record and send voice'}
-            aria-pressed={isRecording && recordingMode === 'send'}
-          >
-            <VoiceLoader
-              className="voice-loader"
-              color="white"
-              shape="circle"
-              dotShape="circle"
-              rows={5}
-              columns={5}
-              dotSize={voiceLoaderSettings.dotSize}
-              cellPadding={voiceLoaderSettings.cellPadding}
-              speed={voiceLoaderSettings.speed}
-              boxSize={voiceLoaderSettings.boxSize}
-              minSize={voiceLoaderSettings.minSize}
-              bloom={voiceLoaderSettings.bloom}
-              halo={voiceLoaderSettings.halo}
-              opacityBase={voiceLoaderSettings.opacityBase}
-              opacityMid={voiceLoaderSettings.opacityMid}
-              opacityPeak={voiceLoaderSettings.opacityPeak}
-              opacity={voiceLoaderSettings.opacity}
-              style={{
-                '--dotmatrix-gap': `${voiceLoaderSettings.cellPadding}px`,
-                '--voice-loader-box-size': `${voiceLoaderSettings.boxSize}px`,
-                '--voice-loader-min-size': `${voiceLoaderSettings.minSize}px`,
-                '--voice-loader-opacity-base': voiceLoaderSettings.opacityBase,
-                '--voice-loader-opacity-mid': voiceLoaderSettings.opacityMid,
-                '--voice-loader-opacity-peak': voiceLoaderSettings.opacityPeak,
-                opacity: voiceLoaderSettings.opacity,
-              }}
-              aria-label={voiceStatusLabel}
-            />
-          </button>
-          <div className="voice-copy" aria-live="polite">
-            <p className="voice-status-label">{voiceStatusLabel}</p>
-            <p className="voice-status-detail">{voiceStatusDetail}</p>
-            <p className="voice-action-label">{voiceActionLabel}</p>
-          </div>
-        </div>
-
-        <section className="settings-panel" aria-label="LUCID settings">
-          <div className="settings-row">
-            <label className="setting-field" htmlFor="model-select">
-              <span>Model</span>
-              <select
-                id="model-select"
-                value={selectedModel}
-                onChange={(event) => setSelectedModel(event.target.value)}
-                disabled={modelStatus !== 'ready'}
-              >
-                {models.length > 0 ? (
-                  models.map((model) => (
-                    <option value={model} key={model}>
-                      {model}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">
-                    {modelStatus === 'loading' ? 'Loading models' : 'No models found'}
-                  </option>
-                )}
-              </select>
-            </label>
-
-            <label className="setting-field" htmlFor="temperature-input">
-              <span>Temperature</span>
-              <input
-                id="temperature-input"
-                type="number"
-                min="0"
-                max="2"
-                step="0.1"
-                value={temperature}
-                onChange={(event) =>
-                  setTemperature(
-                    clampFiniteNumber(
-                      event.target.value,
-                      MIN_TEMPERATURE,
-                      MAX_TEMPERATURE,
-                      DEFAULT_TEMPERATURE,
-                    ),
-                  )
-                }
-              />
-            </label>
-
-            <label className="setting-field" htmlFor="context-input">
-              <span>Context</span>
-              <input
-                id="context-input"
-                type="number"
-                min="512"
-                max="32000"
-                step="512"
-                value={numCtx}
-                onChange={(event) => setNumCtx(clampContextSize(event.target.value))}
-              />
-            </label>
-
-            <label className="setting-field setting-checkbox" htmlFor="auto-speak-input">
-              <span>Auto Speak</span>
-              <input
-                id="auto-speak-input"
-                type="checkbox"
-                checked={autoSpeak}
-                disabled={conversationMode}
-                onChange={(event) => setAutoSpeak(event.target.checked)}
-              />
-            </label>
-
-            <label className="setting-field setting-checkbox" htmlFor="conversation-mode-input">
-              <span>Conversation Mode</span>
-              <input
-                id="conversation-mode-input"
-                type="checkbox"
-                checked={conversationMode}
-                onChange={(event) => handleConversationModeChange(event.target.checked)}
-              />
-            </label>
-          </div>
-
-          {conversationMode ? (
-            <div className="conversation-helper" role="note">
-              Conversation Mode uses press-to-record, then Stop &amp; Send. It is not continuous listening yet.
-            </div>
-          ) : null}
-        </section>
-
-        <section
-          id="lucid-chat-panel"
-          className={`chat-panel ${isChatOpen ? 'chat-panel--open' : ''}`}
-          aria-label="LUCID chat"
-          hidden={!isChatOpen}
-        >
-          <div className="chat-area" aria-live="polite">
-            {chatMessages.length === 0 ? (
-              <p className="chat-empty">Start a local conversation.</p>
-            ) : (
-              chatMessages.map((chatMessage, index) => (
-                <div className={`chat-message chat-message--${chatMessage.role}`} key={`${chatMessage.role}-${index}`}>
-                  <div className="chat-message-header">
-                    <span className="chat-role">{chatMessage.role === 'user' ? 'You' : 'LUCID'}</span>
-                    {chatMessage.role === 'assistant' ? (
-                      <button
-                        type="button"
-                        className="speak-button"
-                        onClick={() => handleSpeakMessage(chatMessage, index)}
-                        disabled={speakingMessageIndex === index && speechStatus === 'loading'}
-                        aria-label={
-                          speakingMessageIndex === index && speechStatus === 'playing'
-                            ? 'Stop assistant message playback'
-                            : 'Speak assistant message'
-                        }
-                      >
-                        {speakingMessageIndex === index
-                          ? speechStatus === 'playing'
-                            ? 'Stop'
-                            : 'Loading'
-                          : 'Speak'}
-                      </button>
-                    ) : null}
-                  </div>
-                  <p>{chatMessage.text}</p>
-                </div>
-              ))
-            )}
-          </div>
-
-          <form className="chat-form" onSubmit={handleSendMessage}>
-            <input
-              aria-label="Message"
-              type="text"
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="Message LUCID"
-            />
-            <div className="chat-actions">
-              <button
-                type="button"
-                className="record-button"
-                onClick={() => handleToggleRecording('draft')}
-                disabled={isSending || isTranscribing || (isRecording && recordingMode !== 'draft')}
-                aria-label={isRecording ? 'Stop recording' : 'Record audio'}
-                aria-pressed={isRecording && recordingMode === 'draft'}
-              >
-                {isTranscribing
-                  ? 'Transcribing'
-                  : isRecording && recordingMode === 'draft'
-                    ? 'Stop'
-                    : 'Record'}
-              </button>
-              <button
-                type="button"
-                className="record-button"
-                onClick={() => handleToggleRecording('send')}
-                disabled={
-                  isSending ||
-                  isTranscribing ||
-                  !selectedModel.trim() ||
-                  (isRecording && recordingMode !== 'send')
-                }
-                aria-label={isRecording && recordingMode === 'send' ? 'Stop and send voice' : 'Send voice'}
-                aria-pressed={isRecording && recordingMode === 'send'}
-              >
-                {isTranscribing
-                  ? 'Transcribing'
-                  : isRecording && recordingMode === 'send'
-                    ? 'Stop & Send'
-                    : conversationMode
-                      ? 'Start Conversation'
-                      : 'Send Voice'}
-              </button>
-              <button
-                type="submit"
-                disabled={isSending || isRecording || isTranscribing || !message.trim() || !selectedModel.trim()}
-                aria-label="Send message"
-              >
-                {isSending ? 'Sending' : 'Send'}
-              </button>
-            </div>
-          </form>
-        </section>
-        {voiceError ? (
-          <p className="voice-error" role="alert">
-            {voiceError}
-          </p>
-        ) : null}
-      </section>
-    </main>
+    <AppShell
+      topbar={
+        <TopBar
+          backendStatus={backendStatus}
+        />
+      }
+    >
+      <VoiceWorkspace
+        VoiceLoader={VoiceLoader}
+        voiceLoaderSettings={voiceLoaderSettings}
+        voiceStatusLabel={voiceStatusLabel}
+        voiceStatusDetail={voiceStatusDetail}
+        voiceActionLabel={voiceActionLabel}
+        isRecording={isRecording}
+        recordingMode={recordingMode}
+        isVoiceActionDisabled={isVoiceActionDisabled}
+        handleToggleRecording={handleToggleRecording}
+        chatMessages={chatMessages}
+        voiceError={voiceError}
+        controlDockProps={{
+          models,
+          selectedModel,
+          modelStatus,
+          temperature,
+          numCtx,
+          autoSpeak,
+          conversationMode,
+          onSelectedModelChange: setSelectedModel,
+          onTemperatureChange: (value) =>
+            setTemperature(
+              clampFiniteNumber(
+                value,
+                MIN_TEMPERATURE,
+                MAX_TEMPERATURE,
+                DEFAULT_TEMPERATURE,
+              ),
+            ),
+          onNumCtxChange: (value) => setNumCtx(clampContextSize(value)),
+          onAutoSpeakChange: setAutoSpeak,
+          onConversationModeChange: handleConversationModeChange,
+        }}
+        chatPanelProps={{
+          isChatOpen,
+          chatMessages,
+          message,
+          setMessage,
+          handleSendMessage,
+          handleToggleRecording,
+          handleSpeakMessage,
+          speakingMessageIndex,
+          speechStatus,
+          isSending,
+          isRecording,
+          isTranscribing,
+          recordingMode,
+          selectedModel,
+          conversationMode,
+        }}
+      />
+    </AppShell>
   )
 }
 
