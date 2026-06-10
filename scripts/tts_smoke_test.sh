@@ -13,6 +13,9 @@ find_repo_root() {
 
 repo_root=$(find_repo_root)
 backend_url=${BACKEND_URL:-http://127.0.0.1:8000}
+default_voice_id="ryan-medium"
+default_voice_model_file="en_US-ryan-medium.onnx"
+default_voice_config_file="en_US-ryan-medium.onnx.json"
 failures=0
 temp_files=()
 
@@ -119,24 +122,24 @@ payload = json.loads(body_path.read_text(encoding="utf-8"))
 voices = payload.get("voices")
 
 if check == "default_voice_id":
-    ok = payload.get("default_voice_id") == "lessac-medium"
+    ok = payload.get("default_voice_id") == "ryan-medium"
 elif check == "has_voice":
     ok = isinstance(voices, list) and len(voices) >= 1
-elif check == "has_lessac":
+elif check == "has_default":
     ok = isinstance(voices, list) and any(
-        isinstance(voice, dict) and voice.get("id") == "lessac-medium"
+        isinstance(voice, dict) and voice.get("id") == "ryan-medium"
         for voice in voices
     )
-elif check == "lessac_available":
-    lessac = next(
+elif check == "default_available":
+    default_voice = next(
         (
             voice
             for voice in voices or []
-            if isinstance(voice, dict) and voice.get("id") == "lessac-medium"
+            if isinstance(voice, dict) and voice.get("id") == "ryan-medium"
         ),
         None,
     )
-    ok = bool(lessac and lessac.get("available") is True) if require_available else True
+    ok = bool(default_voice and default_voice.get("available") is True) if require_available else True
 else:
     raise SystemExit(f"unknown check: {check}")
 
@@ -188,7 +191,7 @@ run_tts_post_check() {
   check_nonempty_file "$label non-empty body" "$body_path"
 
   if [[ "$require_voice_header" == "true" ]]; then
-    check_header_contains "$label voice lessac-medium" "$headers_path" "X-LUCID-TTS-Voice-Id" "lessac-medium"
+    check_header_contains "$label voice $default_voice_id" "$headers_path" "X-LUCID-TTS-Voice-Id" "$default_voice_id"
   fi
 
   if [[ "$require_fallback_header" == "true" ]]; then
@@ -216,17 +219,17 @@ voice_status=$(curl_request GET "$backend_url/tts/voices" "$voice_headers" "$voi
 check_status "/tts/voices HTTP 200" "$voice_status" "200"
 
 if [[ "$voice_status" == "200" ]]; then
-  model_path="$repo_root/backend/models/piper/en_US-lessac-medium.onnx"
-  config_path="$repo_root/backend/models/piper/en_US-lessac-medium.onnx.json"
-  require_lessac_available=false
+  model_path="$repo_root/backend/models/piper/$default_voice_model_file"
+  config_path="$repo_root/backend/models/piper/$default_voice_config_file"
+  require_default_available=false
   if [[ -f "$model_path" && -f "$config_path" ]]; then
-    require_lessac_available=true
+    require_default_available=true
   fi
 
-  check_voices_json "/tts/voices default lessac-medium" "$voice_body" "default_voice_id" false
+  check_voices_json "/tts/voices default $default_voice_id" "$voice_body" "default_voice_id" false
   check_voices_json "/tts/voices has voices" "$voice_body" "has_voice" false
-  check_voices_json "/tts/voices includes lessac-medium" "$voice_body" "has_lessac" false
-  check_voices_json "/tts/voices lessac available when local files exist" "$voice_body" "lessac_available" "$require_lessac_available"
+  check_voices_json "/tts/voices includes $default_voice_id" "$voice_body" "has_default" false
+  check_voices_json "/tts/voices $default_voice_id available when local files exist" "$voice_body" "default_available" "$require_default_available"
 else
   fail "/tts/voices response body"
 fi

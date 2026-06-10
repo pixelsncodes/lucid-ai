@@ -18,6 +18,7 @@ Known voice IDs:
   en_US-lessac-medium
   en_US-amy-medium
   en_US-ryan-medium
+  en_US-hfc_female-medium
   en_GB-alba-medium
 
 Existing files are not overwritten unless --force is provided.
@@ -88,6 +89,10 @@ case "$VOICE_ID" in
   en_US-ryan-medium)
     FILE_ID="en_US-ryan-medium"
     SOURCE_PATH="en/en_US/ryan/medium"
+    ;;
+  en_US-hfc_female-medium)
+    FILE_ID="en_US-hfc_female-medium"
+    SOURCE_PATH="en/en_US/hfc_female/medium"
     ;;
   en_GB-alba-medium)
     FILE_ID="en_GB-alba-medium"

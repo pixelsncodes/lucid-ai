@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-TTS_DEFAULT_VOICE_ID = "lessac-medium"
+TTS_DEFAULT_VOICE_ID = "ryan-medium"
 
 TTS_VOICES = [
     {
@@ -11,7 +11,7 @@ TTS_VOICES = [
         "language": "en-US",
         "model_path": "models/piper/en_US-lessac-medium.onnx",
         "config_path": "models/piper/en_US-lessac-medium.onnx.json",
-        "description": "Default US English Piper voice.",
+        "description": "US English Piper voice.",
     },
     {
         "id": "amy-medium",
@@ -29,7 +29,16 @@ TTS_VOICES = [
         "language": "en-US",
         "model_path": "models/piper/en_US-ryan-medium.onnx",
         "config_path": "models/piper/en_US-ryan-medium.onnx.json",
-        "description": "US English Piper voice.",
+        "description": "Default US English Piper voice.",
+    },
+    {
+        "id": "hfc_female-medium",
+        "name": "HFC Female Medium",
+        "engine": "piper",
+        "language": "en-US",
+        "model_path": "models/piper/en_US-hfc_female-medium.onnx",
+        "config_path": "models/piper/en_US-hfc_female-medium.onnx.json",
+        "description": "US English female Piper voice.",
     },
     {
         "id": "alba-medium",
