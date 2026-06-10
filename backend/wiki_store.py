@@ -110,20 +110,44 @@ def chunk_text(text: str, max_chars: int = 900, overlap_chars: int = 150) -> lis
 
 
 def split_long_text(text: str, max_chars: int, overlap_chars: int) -> list[str]:
-    text = text.strip()
+    text = re.sub(r"\s+", " ", text.strip())
     if len(text) <= max_chars:
         return [text]
 
     chunks = []
     start = 0
+
     while start < len(text):
-        end = min(start + max_chars, len(text))
+        target_end = min(start + max_chars, len(text))
+        end = target_end
+
+        if target_end < len(text):
+            boundary = max(
+                text.rfind(". ", start, target_end),
+                text.rfind("? ", start, target_end),
+                text.rfind("! ", start, target_end),
+                text.rfind("; ", start, target_end),
+                text.rfind(", ", start, target_end),
+                text.rfind(" ", start, target_end),
+            )
+            if boundary > start + max_chars // 2:
+                end = boundary + 1
+
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
+
         if end >= len(text):
             break
-        start = max(0, end - overlap_chars)
+
+        next_start = max(0, end - overlap_chars)
+        while next_start < len(text) and next_start > 0 and not text[next_start - 1].isspace():
+            next_start += 1
+
+        if next_start <= start:
+            next_start = end
+
+        start = next_start
 
     return chunks
 
