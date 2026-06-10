@@ -456,6 +456,73 @@ function App() {
         : voiceStatusLabel === 'Speaking'
           ? DotmCircular8
           : DotmSquare1
+  const voiceLoaderSettings = {
+    Idle: {
+      boxSize: 70,
+      minSize: 70,
+      dotSize: 8,
+      cellPadding: 4,
+      speed: 1.45,
+      bloom: false,
+      halo: 0,
+      opacityBase: 0.28,
+      opacityMid: 0.62,
+      opacityPeak: 1,
+      opacity: 0.86,
+    },
+    Recording: {
+      boxSize: 70,
+      minSize: 70,
+      dotSize: 8,
+      cellPadding: 4,
+      speed: 0.74,
+      bloom: false,
+      halo: 0,
+      opacityBase: 0.32,
+      opacityMid: 0.68,
+      opacityPeak: 1,
+      opacity: 1,
+    },
+    Transcribing: {
+      boxSize: 70,
+      minSize: 70,
+      dotSize: 8,
+      cellPadding: 4,
+      speed: 0.9,
+      bloom: false,
+      halo: 0,
+      opacityBase: 0.3,
+      opacityMid: 0.66,
+      opacityPeak: 1,
+      opacity: 0.94,
+    },
+    Thinking: {
+      boxSize: 70,
+      minSize: 70,
+      dotSize: 8,
+      cellPadding: 4,
+      speed: 0.9,
+      bloom: false,
+      halo: 0,
+      opacityBase: 0.3,
+      opacityMid: 0.66,
+      opacityPeak: 1,
+      opacity: 0.94,
+    },
+    Speaking: {
+      boxSize: 70,
+      minSize: 70,
+      dotSize: 8,
+      cellPadding: 4,
+      speed: 0.78,
+      bloom: false,
+      halo: 0,
+      opacityBase: 0.32,
+      opacityMid: 0.68,
+      opacityPeak: 1,
+      opacity: 1,
+    },
+  }[voiceStatusLabel]
   const voiceStatusDetail = isRecording
     ? `Listening · ${MAX_RECORDING_SECONDS}s max`
     : isTranscribing
@@ -513,10 +580,31 @@ function App() {
           >
             <VoiceLoader
               className="voice-loader"
-              color="currentColor"
-              dotSize={voiceStatusLabel === 'Idle' ? 14 : 12}
-              gap={voiceStatusLabel === 'Idle' ? 0 : 6}
-              speed={voiceStatusLabel === 'Recording' ? 0.82 : 1}
+              color="white"
+              shape="circle"
+              dotShape="circle"
+              rows={5}
+              columns={5}
+              dotSize={voiceLoaderSettings.dotSize}
+              cellPadding={voiceLoaderSettings.cellPadding}
+              speed={voiceLoaderSettings.speed}
+              boxSize={voiceLoaderSettings.boxSize}
+              minSize={voiceLoaderSettings.minSize}
+              bloom={voiceLoaderSettings.bloom}
+              halo={voiceLoaderSettings.halo}
+              opacityBase={voiceLoaderSettings.opacityBase}
+              opacityMid={voiceLoaderSettings.opacityMid}
+              opacityPeak={voiceLoaderSettings.opacityPeak}
+              opacity={voiceLoaderSettings.opacity}
+              style={{
+                '--dotmatrix-gap': `${voiceLoaderSettings.cellPadding}px`,
+                '--voice-loader-box-size': `${voiceLoaderSettings.boxSize}px`,
+                '--voice-loader-min-size': `${voiceLoaderSettings.minSize}px`,
+                '--voice-loader-opacity-base': voiceLoaderSettings.opacityBase,
+                '--voice-loader-opacity-mid': voiceLoaderSettings.opacityMid,
+                '--voice-loader-opacity-peak': voiceLoaderSettings.opacityPeak,
+                opacity: voiceLoaderSettings.opacity,
+              }}
               aria-label={voiceStatusLabel}
             />
           </button>
