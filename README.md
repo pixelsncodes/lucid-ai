@@ -19,6 +19,7 @@ lucid-ai/
   docs/         Project notes and documentation
   models/       Local model notes and configs
   experiments/  Prototypes and tests
+```
 
 ## Local Development
 
@@ -28,6 +29,14 @@ lucid-ai/
 cd backend
 source .venv/bin/activate
 uvicorn main:app --reload --port 8000
+```
+
+### Workflow checks
+
+```bash
+scripts/dev_status.sh
+scripts/verify_backend.sh
+scripts/wiki_smoke_test.sh
 ```
 
 ## Offline Wikipedia ingestion
