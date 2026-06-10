@@ -107,6 +107,18 @@ elif check == "chat_michael_jackson_awards":
         and isinstance(sources, list)
         and bool(sources)
     )
+elif check == "chat_michael_jackson_death_followup":
+    reply = payload.get("reply", "")
+    sources = payload.get("sources")
+    source_text = json.dumps(sources, ensure_ascii=False).lower()
+    ok = (
+        isinstance(reply, str)
+        and "june 25, 2009" in reply.lower()
+        and "michael-jackson" in source_text
+        and unknown_answer not in reply
+        and isinstance(sources, list)
+        and bool(sources)
+    )
 elif check == "chat_atlantis":
     reply = payload.get("reply", "")
     ok = reply == unknown_answer
@@ -181,6 +193,14 @@ if [[ -n "$chat_michael_jackson_awards" ]]; then
   run_json_check "/chat Wikipedia Michael Jackson awards follow-up" "$chat_michael_jackson_awards" "chat_michael_jackson_awards"
 else
   fail "/chat Wikipedia Michael Jackson awards follow-up request"
+fi
+
+chat_michael_jackson_death_body='{"message":"When did he die?","knowledge_base":"wikipedia","history":[{"role":"user","content":"Tell me about Michael Jackson."},{"role":"assistant","content":"Michael Joseph Jackson was an American singer, songwriter, dancer, and philanthropist.","source_titles":["Michael Jackson"]},{"role":"user","content":"How many awards did he win?"},{"role":"assistant","content":"The selected Wikipedia article does not give one single total, but it says Jackson has many awards and lists 13 Grammy Awards, 6 Brit Awards, 5 Billboard Music Awards and 24 American Music Awards.","source_titles":["List of awards and nominations received by Michael Jackson"]}]}'
+chat_michael_jackson_death=$(curl_json POST "$backend_url/chat" "$chat_michael_jackson_death_body" || true)
+if [[ -n "$chat_michael_jackson_death" ]]; then
+  run_json_check "/chat Wikipedia Michael Jackson death follow-up" "$chat_michael_jackson_death" "chat_michael_jackson_death_followup"
+else
+  fail "/chat Wikipedia Michael Jackson death follow-up request"
 fi
 
 chat_atlantis_body='{"message":"What is the capital of Atlantis?","knowledge_base":"wikipedia"}'

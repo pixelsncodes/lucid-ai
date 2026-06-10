@@ -19,6 +19,7 @@ FTS_STOP_WORDS = {
     "by",
     "can",
     "could",
+    "date",
     "did",
     "do",
     "does",
@@ -240,6 +241,8 @@ def title_rank(title: str, query: str, terms: list[str]) -> int:
     ):
         return 0
     if query_term_set and query_term_set <= title_term_set:
+        return 1
+    if len(title_terms) > 1 and normalized_title and normalized_title in normalized_query:
         return 1
     return 2
 

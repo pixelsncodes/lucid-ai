@@ -445,6 +445,44 @@ FOLLOW_UP_PHRASE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 PROPER_NOUN_PATTERN = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}\b")
+FOLLOW_UP_PRONOUN_PATTERN = r"(?:he|she|they|him|her|them|his|their)"
+LIFE_EVENT_FOLLOW_UP_PATTERNS = [
+    (
+        re.compile(
+            rf"\bhow\s+old\s+was\s+{FOLLOW_UP_PRONOUN_PATTERN}\s+when\s+{FOLLOW_UP_PRONOUN_PATTERN}\s+(?:died|passed\s+away)\b",
+            re.IGNORECASE,
+        ),
+        "death age",
+    ),
+    (
+        re.compile(
+            rf"\bwhen\s+did\s+{FOLLOW_UP_PRONOUN_PATTERN}\s+(?:die|pass\s+away)\b",
+            re.IGNORECASE,
+        ),
+        "death date",
+    ),
+    (
+        re.compile(
+            rf"\b{FOLLOW_UP_PRONOUN_PATTERN}\s+(?:died|passed\s+away)\b",
+            re.IGNORECASE,
+        ),
+        "death date",
+    ),
+    (
+        re.compile(
+            rf"\bwhen\s+was\s+{FOLLOW_UP_PRONOUN_PATTERN}\s+born\b",
+            re.IGNORECASE,
+        ),
+        "born date",
+    ),
+    (
+        re.compile(
+            rf"\bwhere\s+was\s+{FOLLOW_UP_PRONOUN_PATTERN}\s+born\b",
+            re.IGNORECASE,
+        ),
+        "born",
+    ),
+]
 
 
 def is_context_dependent_wikipedia_query(message: str) -> bool:
@@ -465,10 +503,27 @@ def extract_recent_topic_from_text(text: str) -> str | None:
     return None
 
 
+def normalize_wikipedia_source_topic(title: str) -> str:
+    title = title.strip()
+    auxiliary_title_patterns = [
+        r"^list\s+of\s+.+\s+received\s+by\s+(.+)$",
+        r"^list\s+of\s+.+\s+won\s+by\s+(.+)$",
+        r"^list\s+of\s+.+\s+earned\s+by\s+(.+)$",
+        r"^death\s+of\s+(.+)$",
+    ]
+
+    for pattern in auxiliary_title_patterns:
+        match = re.match(pattern, title, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+    return title
+
+
 def recent_wikipedia_topic(history: list[ChatMessage]) -> str | None:
     for history_message in reversed(history[-6:]):
         if history_message.source_titles:
-            return history_message.source_titles[0]
+            return normalize_wikipedia_source_topic(history_message.source_titles[0])
 
     for history_message in reversed(history[-6:]):
         if history_message.role != "user":
@@ -489,6 +544,14 @@ def recent_wikipedia_topic(history: list[ChatMessage]) -> str | None:
     return None
 
 
+def wikipedia_life_event_follow_up_terms(message: str) -> str | None:
+    for pattern, terms in LIFE_EVENT_FOLLOW_UP_PATTERNS:
+        if pattern.search(message):
+            return terms
+
+    return None
+
+
 def build_wikipedia_retrieval_query(message: str, history: list[ChatMessage]) -> str:
     if not is_context_dependent_wikipedia_query(message):
         return message
@@ -496,6 +559,10 @@ def build_wikipedia_retrieval_query(message: str, history: list[ChatMessage]) ->
     topic = recent_wikipedia_topic(history)
     if not topic:
         return message
+
+    life_event_terms = wikipedia_life_event_follow_up_terms(message)
+    if life_event_terms:
+        return f"{topic} {life_event_terms}"
 
     follow_up_terms = [
         term
