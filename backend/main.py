@@ -1145,9 +1145,12 @@ def validate_planner_plan(
     message: str,
     history: list[ChatMessage],
     rule_active_topic: str | None = None,
+    rejection_info: dict | None = None,
 ) -> dict | None:
     raw_queries = plan.get("retrieval_queries")
     if not isinstance(raw_queries, list):
+        if rejection_info is not None:
+            rejection_info["reason"] = "no_retrieval_queries_list"
         return None
 
     # Relevance gate: build a term set from the current message, the plan's
@@ -1163,23 +1166,32 @@ def validate_planner_plan(
 
     grounding_blob = planner_grounding_blob(message, history)
     retrieval_queries = []
+    query_rejections: list[str] = []
     for raw_query in raw_queries:
         if not isinstance(raw_query, str):
+            query_rejections.append("not_string")
             continue
         query = raw_query.strip()
         if not query or len(query) > PLANNER_MAX_QUERY_LENGTH:
+            query_rejections.append("empty_or_too_long")
             continue
         if not query_terms(query):
+            query_rejections.append("no_terms")
             continue
         if not is_planner_query_grounded(query, grounding_blob):
+            query_rejections.append("not_grounded")
             continue
         if relevance_terms and not relevance_terms.intersection(set(query_terms(query))):
+            query_rejections.append("not_relevant")
             continue
         if query not in retrieval_queries:
             retrieval_queries.append(query)
 
     retrieval_queries = retrieval_queries[:PLANNER_MAX_QUERIES]
     if not retrieval_queries:
+        if rejection_info is not None:
+            per_query = ", ".join(query_rejections) if query_rejections else "no_queries_produced"
+            rejection_info["reason"] = f"all_queries_filtered: {per_query}"
         return None
 
     raw_entities = plan.get("active_entities")
@@ -1228,7 +1240,12 @@ def call_wikipedia_query_planner(
     history: list[ChatMessage],
     model: str,
     rule_active_topic: str | None = None,
-) -> dict | None:
+) -> tuple[dict | None, dict | None]:
+    """Returns (validated_plan, rejection_log).
+
+    rejection_log is {"raw": <model output>, "reason": <check that failed>}
+    when the plan was produced but rejected, or None on success or network
+    failure (no JSON to show)."""
     planner_user_prompt = (
         "Conversation context:\n"
         f"{build_wikipedia_planner_context(message, history)}\n\n"
@@ -1252,12 +1269,17 @@ def call_wikipedia_query_planner(
         response.raise_for_status()
         raw_content = response.json()["message"]["content"]
     except (requests.RequestException, KeyError, ValueError, TypeError):
-        return None
+        return None, None
 
     plan = parse_planner_plan(raw_content)
     if plan is None:
-        return None
-    return validate_planner_plan(plan, message, history, rule_active_topic)
+        return None, {"raw": raw_content, "reason": "parse_failed"}
+
+    rejection_info: dict = {}
+    validated = validate_planner_plan(plan, message, history, rule_active_topic, rejection_info)
+    if validated is None:
+        return None, {"raw": raw_content, "reason": rejection_info.get("reason", "unknown")}
+    return validated, None
 
 
 def plan_wikipedia_retrieval(
@@ -1284,9 +1306,11 @@ def plan_wikipedia_retrieval(
     if not run_planner:
         return resolution
 
-    validated_plan = call_wikipedia_query_planner(
+    validated_plan, planner_rejection = call_wikipedia_query_planner(
         message, history, model, rule_active_topic=query_plan["active_topic"]
     )
+    if planner_rejection:
+        resolution["_planner_rejection"] = planner_rejection
     if not validated_plan:
         return resolution
 
@@ -1551,7 +1575,10 @@ def chat(request: ChatRequest):
             [str(q) for q in query_plan["retrieval_queries"]]
         )
         wikipedia_debug = build_wikipedia_chat_debug(request, query_plan, retrieved_entries)
-        log_wikipedia_chat_debug(wikipedia_debug)
+        log_debug = dict(wikipedia_debug)
+        if query_plan.get("_planner_rejection"):
+            log_debug["planner_rejection"] = query_plan["_planner_rejection"]
+        log_wikipedia_chat_debug(log_debug)
 
         if request.include_retrieval_debug:
             retrieval_debug = retrieved_entries
