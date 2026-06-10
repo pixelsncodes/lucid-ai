@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal, Optional
 
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import requests
@@ -128,17 +128,36 @@ RETRIEVAL_STOP_WORDS = {
     "and",
     "are",
     "as",
+    "about",
+    "can",
+    "could",
+    "describe",
+    "did",
+    "do",
+    "does",
+    "explain",
     "for",
     "from",
+    "give",
+    "how",
     "in",
     "is",
     "it",
+    "me",
     "of",
     "on",
+    "sentence",
+    "short",
+    "should",
+    "tell",
     "the",
     "to",
     "what",
+    "when",
+    "where",
     "who",
+    "why",
+    "would",
 }
 
 
@@ -171,37 +190,101 @@ def load_wikipedia_articles(path: Path = WIKIPEDIA_ARTICLES_PATH) -> list[dict[s
 WIKIPEDIA_ARTICLES = load_wikipedia_articles()
 
 
-def tokenize_for_retrieval(text: str) -> set[str]:
-    return {
-        word
-        for word in re.findall(r"[a-z0-9]+", text.lower())
-        if word not in RETRIEVAL_STOP_WORDS
+def normalize_retrieval_token(token: str) -> str:
+    normalized = token.lower()
+    if normalized.endswith("'s"):
+        normalized = normalized[:-2]
+
+    if len(normalized) > 4 and normalized.endswith("ies"):
+        return f"{normalized[:-3]}y"
+    if len(normalized) > 3 and normalized.endswith("s"):
+        return normalized[:-1]
+    return normalized
+
+
+def tokenize_for_retrieval(text: str) -> list[str]:
+    tokens = []
+    for raw_token in re.findall(r"[a-z0-9]+(?:'s)?", text.lower()):
+        if raw_token.endswith("'s"):
+            raw_token = raw_token[:-2]
+        if raw_token in RETRIEVAL_STOP_WORDS:
+            continue
+        token = normalize_retrieval_token(raw_token)
+        if token and token not in RETRIEVAL_STOP_WORDS and token not in tokens:
+            tokens.append(token)
+    return tokens
+
+
+def build_retrieval_debug_entry(scored_entry: dict) -> dict:
+    entry = scored_entry["entry"]
+    debug_entry = {
+        "id": entry["id"],
+        "title": entry["title"],
+        "score": scored_entry["score"],
+        "matched_terms": scored_entry["matched_terms"],
+        "title_matches": scored_entry["title_matches"],
+        "text_matches": scored_entry["text_matches"],
+        "title_phrase_match": scored_entry["title_phrase_match"],
+        "title_token_match": scored_entry["title_token_match"],
+        "score_breakdown": scored_entry["score_breakdown"],
     }
+    return debug_entry
 
 
 def score_wikipedia_articles(query: str, limit: int = 3) -> list[dict]:
-    query_words = tokenize_for_retrieval(query)
+    query_tokens = tokenize_for_retrieval(query)
+    query_words = set(query_tokens)
     if not query_words:
         return []
 
+    query_phrase = " ".join(query_tokens)
     scored_entries = []
     for entry in WIKIPEDIA_ARTICLES:
-        title_words = tokenize_for_retrieval(entry["title"])
-        text_words = tokenize_for_retrieval(entry["text"])
-        score = (len(query_words & title_words) * 2) + len(query_words & text_words)
+        title_tokens = tokenize_for_retrieval(entry["title"])
+        title_words = set(title_tokens)
+        text_words = set(tokenize_for_retrieval(entry["text"]))
+        title_matches = query_words & title_words
+        text_matches = query_words & text_words
         matched_terms = query_words & (title_words | text_words)
-        if score >= 2 or len(matched_terms) >= 2:
+        if not matched_terms:
+            continue
+
+        title_score = len(title_matches) * 2
+        text_score = len(text_matches) * 2
+        article_title_phrase = " ".join(title_tokens)
+        title_phrase_match = bool(
+            article_title_phrase
+            and query_phrase
+            and article_title_phrase in query_phrase
+        )
+        title_token_match = bool(
+            0 < len(query_words) <= 4
+            and query_words <= title_words
+        )
+        phrase_bonus = 4 if title_phrase_match else 0
+        title_token_bonus = 3 if title_token_match else 0
+        score = title_score + text_score + phrase_bonus + title_token_bonus
+
+        if score >= 1:
             scored_entries.append(
                 {
                     "entry": entry,
                     "score": score,
                     "matched_terms": sorted(matched_terms),
-                    "title_matches": sorted(query_words & title_words),
-                    "text_matches": sorted(query_words & text_words),
+                    "title_matches": sorted(title_matches),
+                    "text_matches": sorted(text_matches),
+                    "title_phrase_match": title_phrase_match,
+                    "title_token_match": title_token_match,
+                    "score_breakdown": {
+                        "title_score": title_score,
+                        "text_score": text_score,
+                        "phrase_bonus": phrase_bonus,
+                        "title_token_bonus": title_token_bonus,
+                    },
                 }
             )
 
-    scored_entries.sort(key=lambda item: (-item["score"], item["entry"]["title"]))
+    scored_entries.sort(key=lambda item: (-item["score"], item["entry"]["title"], item["entry"]["id"]))
     return scored_entries[:limit]
 
 
@@ -263,6 +346,27 @@ def get_models():
 @app.get("/knowledge-bases")
 def get_knowledge_bases():
     return KNOWLEDGE_BASES
+
+
+@app.get("/rag/search")
+def search_rag(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(default=3, ge=1, le=10),
+    knowledge_base: Literal["wikipedia"] = "wikipedia",
+):
+    query = q.strip()
+    if not query:
+        raise HTTPException(status_code=422, detail="q must not be empty")
+
+    scored_entries = score_wikipedia_articles(query, limit)
+    return {
+        "knowledge_base": knowledge_base,
+        "query": query,
+        "results": [
+            build_retrieval_debug_entry(scored_entry)
+            for scored_entry in scored_entries
+        ],
+    }
 
 
 def load_cuda_libraries():
@@ -383,14 +487,7 @@ def chat(request: ChatRequest):
                 for scored_entry in scored_entries
             ]
             retrieval_debug = [
-                {
-                    "id": scored_entry["entry"]["id"],
-                    "title": scored_entry["entry"]["title"],
-                    "score": scored_entry["score"],
-                    "matched_terms": scored_entry["matched_terms"],
-                    "title_matches": scored_entry["title_matches"],
-                    "text_matches": scored_entry["text_matches"],
-                }
+                build_retrieval_debug_entry(scored_entry)
                 for scored_entry in scored_entries
             ]
         else:
