@@ -251,6 +251,12 @@ function App() {
       .map((chatMessage) => ({
         role: chatMessage.role,
         content: chatMessage.text.trim().slice(0, MAX_HISTORY_CONTENT_LENGTH),
+        source_titles: Array.isArray(chatMessage.sources)
+          ? chatMessage.sources
+              .map((source) => String(source?.title || '').trim())
+              .filter(Boolean)
+              .slice(0, 5)
+          : [],
       }))
       .filter((chatMessage) => chatMessage.content)
       .slice(-MAX_HISTORY_MESSAGES)
@@ -284,6 +290,7 @@ function App() {
         id: nextChatMessageIdRef.current++,
         role: 'assistant',
         text: data.reply || 'No reply received.',
+        sources: Array.isArray(data.sources) ? data.sources : [],
         autoSpeak: autoSpeakRef.current,
       }
 

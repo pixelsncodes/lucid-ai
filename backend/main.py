@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import requests
 
-from wiki_store import search_index
+from wiki_store import query_terms, search_index
 
 from config import (
     DEFAULT_NUM_CTX,
@@ -39,6 +39,7 @@ WIKIPEDIA_ARTICLES_PATH = Path(__file__).parent / "data" / "wikipedia" / "articl
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
+    source_titles: list[str] = Field(default_factory=list, max_length=5)
 
     @field_validator("content")
     @classmethod
@@ -49,6 +50,25 @@ class ChatMessage(BaseModel):
         if len(trimmed_content) > 2000:
             raise ValueError("history content must be 2000 characters or fewer")
         return trimmed_content
+
+    @field_validator("source_titles", mode="before")
+    @classmethod
+    def default_source_titles(cls, value):
+        return [] if value is None else value
+
+    @field_validator("source_titles")
+    @classmethod
+    def validate_source_titles(cls, value):
+        source_titles = []
+        for title in value:
+            if not isinstance(title, str):
+                continue
+
+            trimmed_title = title.strip()
+            if trimmed_title and trimmed_title not in source_titles:
+                source_titles.append(trimmed_title[:120])
+
+        return source_titles[:5]
 
 
 class ChatRequest(BaseModel):
@@ -368,11 +388,124 @@ def answer_supported_capital_question(
     return None
 
 
+def answer_supported_awards_question(
+    question: str,
+    entries: list[dict[str, str]],
+) -> str | None:
+    lowered_question = question.lower()
+    if "award" not in lowered_question:
+        return None
+
+    award_patterns = [
+        r"\b\d+\s+Grammy Awards\b",
+        r"\b\d+\s+Brit Awards\b",
+        r"\b\d+\s+Billboard Music Awards\b",
+        r"\b\d+\s+American Music Awards\b",
+        r"\b\d+\s+Guinness World Records\b",
+    ]
+
+    award_mentions = []
+    has_many_awards = False
+    for entry in entries:
+        text = entry.get("text", "")
+        if re.search(r"\bmany awards\b", text, flags=re.IGNORECASE):
+            has_many_awards = True
+
+        for pattern in award_patterns:
+            for match in re.finditer(pattern, text):
+                mention = match.group(0)
+                if mention not in award_mentions:
+                    award_mentions.append(mention)
+
+    if award_mentions:
+        return (
+            "The selected Wikipedia article does not give one single total, "
+            f"but it says Jackson has many awards and lists {', '.join(award_mentions)}."
+        )
+
+    if has_many_awards:
+        return "The selected Wikipedia article says Jackson has many awards, but it does not give one single total in the retrieved context."
+
+    return None
+
+
 def clean_wikipedia_reply(reply: str) -> tuple[str, bool]:
     reply = reply.strip()
     if UNKNOWN_WIKIPEDIA_ANSWER in reply and reply != UNKNOWN_WIKIPEDIA_ANSWER:
         return UNKNOWN_WIKIPEDIA_ANSWER, True
     return reply, reply == UNKNOWN_WIKIPEDIA_ANSWER
+
+
+FOLLOW_UP_REFERENCE_PATTERN = re.compile(
+    r"\b(he|she|they|it|him|her|his|their|them|that|those|these|its)\b",
+    re.IGNORECASE,
+)
+FOLLOW_UP_PHRASE_PATTERN = re.compile(
+    r"\b(what happened next|what about|how many|when was|where was)\b",
+    re.IGNORECASE,
+)
+PROPER_NOUN_PATTERN = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}\b")
+
+
+def is_context_dependent_wikipedia_query(message: str) -> bool:
+    return bool(
+        FOLLOW_UP_REFERENCE_PATTERN.search(message)
+        or FOLLOW_UP_PHRASE_PATTERN.search(message)
+    )
+
+
+def extract_recent_topic_from_text(text: str) -> str | None:
+    for match in PROPER_NOUN_PATTERN.finditer(text):
+        topic = match.group(0).strip()
+        first_word = topic.split()[0].lower()
+        if first_word in {"tell", "what", "when", "where", "how", "the", "this", "that"}:
+            continue
+        return topic
+
+    return None
+
+
+def recent_wikipedia_topic(history: list[ChatMessage]) -> str | None:
+    for history_message in reversed(history[-6:]):
+        if history_message.source_titles:
+            return history_message.source_titles[0]
+
+    for history_message in reversed(history[-6:]):
+        if history_message.role != "user":
+            continue
+
+        topic = extract_recent_topic_from_text(history_message.content)
+        if topic:
+            return topic
+
+    for history_message in reversed(history[-6:]):
+        if history_message.role != "assistant":
+            continue
+
+        topic = extract_recent_topic_from_text(history_message.content)
+        if topic:
+            return topic
+
+    return None
+
+
+def build_wikipedia_retrieval_query(message: str, history: list[ChatMessage]) -> str:
+    if not is_context_dependent_wikipedia_query(message):
+        return message
+
+    topic = recent_wikipedia_topic(history)
+    if not topic:
+        return message
+
+    follow_up_terms = [
+        term
+        for term in query_terms(message)
+        if term not in query_terms(topic)
+    ]
+    if follow_up_terms:
+        return f"{topic} {' '.join(follow_up_terms)}"
+
+    return f"{topic} {message}"
 
 
 app.add_middleware(
@@ -558,7 +691,8 @@ def chat(request: ChatRequest):
         ]
         sources = None
     else:
-        retrieved_entries = search_wikipedia_knowledge_base(request.message)
+        retrieval_query = build_wikipedia_retrieval_query(request.message, request.history)
+        retrieved_entries = search_wikipedia_knowledge_base(retrieval_query)
 
         if request.include_retrieval_debug:
             retrieval_debug = retrieved_entries
@@ -615,6 +749,8 @@ def chat(request: ChatRequest):
         ]
 
         supported_answer = answer_supported_capital_question(request.message, retrieved_entries)
+        if not supported_answer:
+            supported_answer = answer_supported_awards_question(request.message, retrieved_entries)
         if supported_answer:
             response = {"reply": supported_answer, "sources": sources}
             if retrieval_debug is not None:

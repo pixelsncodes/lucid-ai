@@ -95,6 +95,18 @@ elif check == "chat_canada":
         and isinstance(sources, list)
         and bool(sources)
     )
+elif check == "chat_michael_jackson_awards":
+    reply = payload.get("reply", "")
+    sources = payload.get("sources")
+    source_text = json.dumps(sources, ensure_ascii=False).lower()
+    ok = (
+        isinstance(reply, str)
+        and "award" in reply.lower()
+        and "michael-jackson" in source_text
+        and unknown_answer not in reply
+        and isinstance(sources, list)
+        and bool(sources)
+    )
 elif check == "chat_atlantis":
     reply = payload.get("reply", "")
     ok = reply == unknown_answer
@@ -161,6 +173,14 @@ if [[ -n "$chat_canada" ]]; then
   run_json_check "/chat Wikipedia Canada mentions Ottawa" "$chat_canada" "chat_canada"
 else
   fail "/chat Wikipedia Canada request"
+fi
+
+chat_michael_jackson_awards_body='{"message":"How many awards did he win?","knowledge_base":"wikipedia","history":[{"role":"user","content":"Tell me about Michael Jackson."},{"role":"assistant","content":"Michael Joseph Jackson was an American singer, songwriter, dancer, and philanthropist.","source_titles":["Michael Jackson"]}]}'
+chat_michael_jackson_awards=$(curl_json POST "$backend_url/chat" "$chat_michael_jackson_awards_body" || true)
+if [[ -n "$chat_michael_jackson_awards" ]]; then
+  run_json_check "/chat Wikipedia Michael Jackson awards follow-up" "$chat_michael_jackson_awards" "chat_michael_jackson_awards"
+else
+  fail "/chat Wikipedia Michael Jackson awards follow-up request"
 fi
 
 chat_atlantis_body='{"message":"What is the capital of Atlantis?","knowledge_base":"wikipedia"}'
