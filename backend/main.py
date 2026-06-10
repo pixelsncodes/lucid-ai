@@ -1,4 +1,5 @@
 import ctypes
+import re
 import site
 import subprocess
 import sys
@@ -24,6 +25,7 @@ from config import (
     SYSTEM_PROMPT,
     TTS_MAX_TEXT_LENGTH,
     TTS_MODEL_PATH,
+    WIKIPEDIA_KNOWLEDGE_BASE,
 )
 
 app = FastAPI(title="LUCID Backend")
@@ -47,6 +49,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = Field(default_factory=list, max_length=12)
+    knowledge_base: Literal["none", "wikipedia"] = "none"
     model: Optional[str] = None
     temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, allow_inf_nan=False)
     num_ctx: int = Field(default=DEFAULT_NUM_CTX, ge=512, le=32000)
@@ -102,6 +105,73 @@ class TTSRequest(BaseModel):
         return trimmed_text
 
 
+KNOWLEDGE_BASES = [
+    {
+        "id": "none",
+        "name": "None",
+        "description": "Use the local model without a selected knowledgebase.",
+    },
+    {
+        "id": "wikipedia",
+        "name": "Wikipedia Mock",
+        "description": "Use a tiny local mock Wikipedia knowledgebase for RAG plumbing tests.",
+    },
+]
+
+UNKNOWN_WIKIPEDIA_ANSWER = "I don't know from the selected Wikipedia knowledgebase."
+RETRIEVAL_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "the",
+    "to",
+    "what",
+    "who",
+}
+
+
+def tokenize_for_retrieval(text: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", text.lower())
+        if word not in RETRIEVAL_STOP_WORDS
+    }
+
+
+def search_wikipedia_knowledge_base(query: str, limit: int = 3) -> list[dict[str, str]]:
+    query_words = tokenize_for_retrieval(query)
+    if not query_words:
+        return []
+
+    scored_entries = []
+    for entry in WIKIPEDIA_KNOWLEDGE_BASE:
+        title_words = tokenize_for_retrieval(entry["title"])
+        text_words = tokenize_for_retrieval(entry["text"])
+        score = (len(query_words & title_words) * 2) + len(query_words & text_words)
+        matched_terms = query_words & (title_words | text_words)
+        if score >= 2 or len(matched_terms) >= 2:
+            scored_entries.append((score, entry))
+
+    scored_entries.sort(key=lambda item: (-item[0], item[1]["title"]))
+    return [entry for _score, entry in scored_entries[:limit]]
+
+
+def build_wikipedia_context(entries: list[dict[str, str]]) -> str:
+    return "\n\n".join(
+        f"Title: {entry['title']}\nText: {entry['text']}"
+        for entry in entries
+    )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -142,6 +212,10 @@ def get_models():
             "models": [],
         }
 
+
+@app.get("/knowledge-bases")
+def get_knowledge_bases():
+    return KNOWLEDGE_BASES
 
 
 def load_cuda_libraries():
@@ -237,20 +311,67 @@ def text_to_speech(request: TTSRequest):
 @app.post("/chat")
 def chat(request: ChatRequest):
     selected_model = request.model or OLLAMA_MODEL
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT,
-        },
-        *[
+    if request.knowledge_base == "none":
+        messages = [
             {
-                "role": history_message.role,
-                "content": history_message.content,
-            }
-            for history_message in request.history
-        ],
-        {"role": "user", "content": request.message},
-    ]
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            *[
+                {
+                    "role": history_message.role,
+                    "content": history_message.content,
+                }
+                for history_message in request.history
+            ],
+            {"role": "user", "content": request.message},
+        ]
+        sources = None
+    else:
+        retrieved_entries = search_wikipedia_knowledge_base(request.message)
+        if not retrieved_entries:
+            return {"reply": UNKNOWN_WIKIPEDIA_ANSWER, "sources": []}
+
+        rag_system_prompt = (
+            "You are LUCID using the selected local Wikipedia knowledgebase.\n"
+            "Answer only using facts explicitly present in the provided Wikipedia context.\n"
+            "Reuse only wording and facts from the provided Wikipedia context.\n"
+            "Do not use outside knowledge.\n"
+            "Do not infer unstated examples, libraries, names, dates, capabilities, or claims.\n"
+            "Do not add assumptions, examples, analogies, marketing claims, extra explanation, jokes, sarcasm, or personality.\n"
+            "Answer in 1-3 concise sentences.\n"
+            "Cite article titles used.\n"
+            f"If the provided context does not contain the answer, say exactly: {UNKNOWN_WIKIPEDIA_ANSWER}"
+        )
+        wikipedia_context = build_wikipedia_context(retrieved_entries)
+        messages = [
+            {
+                "role": "system",
+                "content": rag_system_prompt,
+            },
+            *[
+                {
+                    "role": history_message.role,
+                    "content": history_message.content,
+                }
+                for history_message in request.history
+            ],
+            {
+                "role": "user",
+                "content": (
+                    "Wikipedia context:\n"
+                    f"{wikipedia_context}\n\n"
+                    "Strict instruction: Reuse only wording and facts from the Wikipedia context above. "
+                    "Do not infer unstated examples, libraries, names, dates, capabilities, or claims. "
+                    "Answer in 1-3 concise sentences.\n\n"
+                    f"User question: {request.message}"
+                ),
+            },
+        ]
+        sources = [
+            {"id": entry["id"], "title": entry["title"]}
+            for entry in retrieved_entries
+        ]
 
     try:
         response = requests.post(
@@ -259,7 +380,7 @@ def chat(request: ChatRequest):
                 "model": selected_model,
                 "stream": False,
                 "options": {
-                    "temperature": request.temperature,
+                    "temperature": 0.0 if request.knowledge_base == "wikipedia" else request.temperature,
                     "num_ctx": request.num_ctx,
                 },
                 "messages": messages,
@@ -268,6 +389,9 @@ def chat(request: ChatRequest):
         )
         response.raise_for_status()
         data = response.json()
-        return {"reply": data["message"]["content"]}
+        chat_response = {"reply": data["message"]["content"]}
+        if sources is not None:
+            chat_response["sources"] = sources
+        return chat_response
     except (requests.RequestException, KeyError, ValueError):
         return {"reply": "LUCID could not reach the local model."}
