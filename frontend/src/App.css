@@ -142,6 +142,73 @@ button {
   gap: 8px;
 }
 
+.knowledge-base-select {
+  min-width: 0;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.knowledge-base-select-label {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.knowledge-base-select-shell {
+  position: relative;
+  min-width: 82px;
+  max-width: 132px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.knowledge-base-select select {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 20px 0 0;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+}
+
+.knowledge-base-select select:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.knowledge-base-select select option {
+  color: var(--text-primary);
+  background: #111114;
+}
+
+.knowledge-base-select-chevron {
+  position: absolute;
+  right: 0;
+  width: 0.58rem;
+  color: #55555f;
+  pointer-events: none;
+}
+
 .status-chip {
   max-width: 260px;
   color: var(--text-secondary);
@@ -793,6 +860,7 @@ button {
 .chat-toggle:focus-visible,
 .chat-form button:focus-visible,
 .chat-form input:focus-visible,
+.knowledge-base-select:focus-within,
 .setting-field select:focus-visible,
 .setting-field input:focus-visible,
 .model-select-button:focus-visible,
@@ -825,6 +893,11 @@ button {
 
   .status-chip {
     max-width: 148px;
+  }
+
+  .knowledge-base-select-shell {
+    min-width: 72px;
+    max-width: 104px;
   }
 
   .voice-stage {
@@ -861,13 +934,23 @@ button {
     gap: 10px;
   }
 
-  .status-chip-label {
+  .status-chip-label,
+  .knowledge-base-select-label {
     display: none;
   }
 
   .status-chip {
     max-width: 108px;
     padding-inline: 8px;
+  }
+
+  .knowledge-base-select {
+    padding-inline: 8px;
+  }
+
+  .knowledge-base-select-shell {
+    min-width: 70px;
+    max-width: 88px;
   }
 
   .voice-stage {

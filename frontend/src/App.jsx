@@ -18,6 +18,7 @@ const MAX_HISTORY_MESSAGES = 12
 const MAX_HISTORY_CONTENT_LENGTH = 2000
 const MAX_RECORDING_SECONDS = 30
 const AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+const FALLBACK_KNOWLEDGE_BASES = [{ id: 'none', name: 'None' }]
 
 const clampFiniteNumber = (value, min, max, fallback) => {
   const nextValue = Number(value)
@@ -44,6 +45,9 @@ function App() {
   const [models, setModels] = useState([])
   const [selectedModel, setSelectedModel] = useState('')
   const [modelStatus, setModelStatus] = useState('loading')
+  const [knowledgeBases, setKnowledgeBases] = useState(FALLBACK_KNOWLEDGE_BASES)
+  const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState('none')
+  const [knowledgeBaseStatus, setKnowledgeBaseStatus] = useState('loading')
   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
   const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX)
   const [autoSpeak, setAutoSpeak] = useState(true)
@@ -100,6 +104,45 @@ function App() {
         setModels([])
         setSelectedModel('')
         setModelStatus('offline')
+      })
+  }, [])
+
+  useEffect(() => {
+    fetch('http://localhost:8000/knowledge-bases')
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Knowledge bases request failed')
+        }
+
+        return response.json()
+      })
+      .then((data) => {
+        const returnedKnowledgeBases = Array.isArray(data)
+          ? data
+          : Array.isArray(data.knowledge_bases)
+            ? data.knowledge_bases
+            : Array.isArray(data.knowledgeBases)
+              ? data.knowledgeBases
+              : []
+        const availableKnowledgeBases = returnedKnowledgeBases
+          .map((knowledgeBase) => ({
+            id: String(knowledgeBase?.id || ''),
+            name: String(knowledgeBase?.name || knowledgeBase?.id || ''),
+          }))
+          .filter((knowledgeBase) => knowledgeBase.id && knowledgeBase.name)
+
+        setKnowledgeBases(availableKnowledgeBases)
+        setSelectedKnowledgeBase(
+          availableKnowledgeBases.some((knowledgeBase) => knowledgeBase.id === 'none')
+            ? 'none'
+            : availableKnowledgeBases[0]?.id || '',
+        )
+        setKnowledgeBaseStatus(availableKnowledgeBases.length > 0 ? 'ready' : 'empty')
+      })
+      .catch(() => {
+        setKnowledgeBases(FALLBACK_KNOWLEDGE_BASES)
+        setSelectedKnowledgeBase('none')
+        setKnowledgeBaseStatus('offline')
       })
   }, [])
 
@@ -168,6 +211,7 @@ function App() {
           message: trimmedMessage,
           history,
           model: trimmedModel,
+          knowledge_base: selectedKnowledgeBase,
           temperature: safeTemperature,
           num_ctx: safeNumCtx,
         }),
@@ -553,6 +597,10 @@ function App() {
       topbar={
         <TopBar
           backendStatus={backendStatus}
+          knowledgeBases={knowledgeBases}
+          selectedKnowledgeBase={selectedKnowledgeBase}
+          knowledgeBaseStatus={knowledgeBaseStatus}
+          onSelectedKnowledgeBaseChange={setSelectedKnowledgeBase}
         />
       }
     >
