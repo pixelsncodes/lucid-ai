@@ -16,3 +16,4 @@ backend/data/wikipedia/*.xml.bz2
 backend/data/wikipedia/*.jsonl
 backend/data/wikipedia/imported-*.json
 backend/data/wikipedia/dumps/
+*:Zone.Identifier
