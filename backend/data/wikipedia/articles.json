@@ -1,0 +1,52 @@
+[
+  {
+    "id": "wikipedia",
+    "title": "Wikipedia",
+    "text": "Wikipedia is a free online encyclopedia written and maintained by volunteer contributors. It is hosted by the Wikimedia Foundation and contains articles on many subjects in many languages."
+  },
+  {
+    "id": "python-programming-language",
+    "title": "Python programming language",
+    "text": "Python is a high-level programming language known for readable syntax and a large standard library. It is often used for web development, data analysis, automation, and artificial intelligence."
+  },
+  {
+    "id": "vancouver",
+    "title": "Vancouver",
+    "text": "Vancouver is a coastal city in British Columbia, Canada. It is known for its port, mountain and ocean setting, film production, and diverse urban population."
+  },
+  {
+    "id": "artificial-intelligence",
+    "title": "Artificial intelligence",
+    "text": "Artificial intelligence, often abbreviated AI, is the field of building computer systems that perform tasks associated with human intelligence, such as language understanding, reasoning, planning, and pattern recognition."
+  },
+  {
+    "id": "fastapi",
+    "title": "FastAPI",
+    "text": "FastAPI is a modern Python web framework for building APIs. It uses Python type hints, supports automatic validation with Pydantic, and can generate OpenAPI documentation."
+  },
+  {
+    "id": "ollama",
+    "title": "Ollama",
+    "text": "Ollama is software for running large language models on a local computer. It provides a local API and can manage model downloads and execution."
+  },
+  {
+    "id": "retrieval-augmented-generation",
+    "title": "Retrieval-augmented generation",
+    "text": "Retrieval-augmented generation is a technique that gives a language model external context retrieved from a document collection before it writes an answer."
+  },
+  {
+    "id": "speech-recognition",
+    "title": "Speech recognition",
+    "text": "Speech recognition is the process of converting spoken language into text. It is used in dictation systems, voice assistants, captions, and accessibility tools."
+  },
+  {
+    "id": "text-to-speech",
+    "title": "Text-to-speech",
+    "text": "Text-to-speech is technology that converts written text into spoken audio. It is used for screen readers, navigation systems, announcements, and voice interfaces."
+  },
+  {
+    "id": "british-columbia",
+    "title": "British Columbia",
+    "text": "British Columbia is a province on the west coast of Canada. Victoria is the provincial capital, and Vancouver is the province's largest city."
+  }
+]
