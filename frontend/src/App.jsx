@@ -442,6 +442,11 @@ function App() {
     activeSpeechRef.current?.cleanup({ abortRequest: true, stopAudio: true })
   }
 
+  const handleVoiceMatrixRecording = async (mode = 'send') => {
+    stopActiveSpeech()
+    await handleToggleRecording(mode)
+  }
+
   const handleSpeakMessage = async (chatMessage, index) => {
     if (!chatMessage.text.trim()) {
       return
@@ -477,6 +482,7 @@ function App() {
 
         if (stopAudio) {
           audio.pause()
+          audio.currentTime = 0
           audio.removeAttribute('src')
           audio.load()
         }
@@ -688,7 +694,7 @@ function App() {
         recordingMode={recordingMode}
         isVoiceActionDisabled={isVoiceActionDisabled}
         autoSendVoice={autoSendVoice}
-        handleToggleRecording={handleToggleRecording}
+        handleToggleRecording={handleVoiceMatrixRecording}
         chatMessages={chatMessages}
         voiceError={voiceError}
         controlDockProps={{
