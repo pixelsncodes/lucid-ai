@@ -96,27 +96,25 @@
 }
 
 .voice-button {
-  width: clamp(176px, 32vw, 260px);
+  width: clamp(104px, 18vw, 132px);
   aspect-ratio: 1;
+  padding: 0;
   display: grid;
   place-items: center;
   color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 50%;
-  background: #050505;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   cursor: pointer;
   transition:
-    border-color 160ms ease,
     color 160ms ease,
-    transform 160ms ease,
-    background 160ms ease;
+    opacity 160ms ease,
+    transform 160ms ease;
 }
 
 .voice-button:hover:not(:disabled) {
   transform: translateY(-1px);
-  border-color: rgba(255, 255, 255, 0.42);
-  background: #0b0b0b;
+  color: #f2f2f2;
 }
 
 .voice-button:focus-visible,
@@ -132,28 +130,55 @@
 
 .voice-button:disabled {
   color: #6f6f6f;
-  border-color: rgba(255, 255, 255, 0.12);
   cursor: not-allowed;
+  opacity: 0.68;
 }
 
 .voice-button--recording {
-  border-color: rgba(255, 255, 255, 0.54);
-  background: #0d0d0d;
+  color: #ffffff;
 }
 
 .voice-button--transcribing,
 .voice-button--thinking {
   color: #ededed;
-  border-color: rgba(255, 255, 255, 0.36);
 }
 
 .voice-button--speaking {
   color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.46);
 }
 
 .voice-loader {
+  width: var(--voice-loader-box-size);
+  min-width: var(--voice-loader-min-size);
+  height: var(--voice-loader-box-size);
+  min-height: var(--voice-loader-min-size);
+  place-content: center;
   pointer-events: none;
+}
+
+.voice-loader .dotmatrix-loader__dot {
+  background: #ffffff;
+  opacity: var(--voice-loader-opacity-base);
+  transform: scale(1);
+  animation-name: voice-dotmatrix-opacity;
+}
+
+.voice-loader.dotmatrix-loader--reduced-motion .dotmatrix-loader__dot {
+  opacity: var(--voice-loader-opacity-mid);
+}
+
+@keyframes voice-dotmatrix-opacity {
+  0%,
+  100% {
+    opacity: var(--voice-loader-opacity-base);
+    transform: scale(1);
+  }
+
+  45%,
+  55% {
+    opacity: var(--voice-loader-opacity-peak);
+    transform: scale(1);
+  }
 }
 
 .voice-copy {
