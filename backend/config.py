@@ -43,3 +43,52 @@ SYSTEM_PROMPT = (
     "while the user is frustrated, debugging a failure, or dealing with a "
     "serious issue."
 )
+
+WIKIPEDIA_KNOWLEDGE_BASE = [
+    {
+        "id": "wikipedia",
+        "title": "Wikipedia",
+        "text": (
+            "Wikipedia is a free online encyclopedia written and maintained by "
+            "volunteer contributors. It is hosted by the Wikimedia Foundation "
+            "and contains articles on many subjects in many languages."
+        ),
+    },
+    {
+        "id": "python-programming-language",
+        "title": "Python programming language",
+        "text": (
+            "Python is a high-level programming language known for readable "
+            "syntax and a large standard library. It is often used for web "
+            "development, data analysis, automation, and artificial intelligence."
+        ),
+    },
+    {
+        "id": "vancouver",
+        "title": "Vancouver",
+        "text": (
+            "Vancouver is a coastal city in British Columbia, Canada. It is "
+            "known for its port, mountain and ocean setting, film production, "
+            "and diverse urban population."
+        ),
+    },
+    {
+        "id": "artificial-intelligence",
+        "title": "Artificial intelligence",
+        "text": (
+            "Artificial intelligence, often abbreviated AI, is the field of "
+            "building computer systems that perform tasks associated with human "
+            "intelligence, such as language understanding, reasoning, planning, "
+            "and pattern recognition."
+        ),
+    },
+    {
+        "id": "fastapi",
+        "title": "FastAPI",
+        "text": (
+            "FastAPI is a modern Python web framework for building APIs. It uses "
+            "Python type hints, supports automatic validation with Pydantic, and "
+            "can generate OpenAPI documentation."
+        ),
+    },
+]
