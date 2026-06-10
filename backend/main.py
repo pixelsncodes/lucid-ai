@@ -52,6 +52,7 @@ class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = Field(default_factory=list, max_length=12)
     knowledge_base: Literal["none", "wikipedia"] = "none"
+    include_retrieval_debug: bool = False
     model: Optional[str] = None
     temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, allow_inf_nan=False)
     num_ctx: int = Field(default=DEFAULT_NUM_CTX, ge=512, le=32000)
@@ -178,7 +179,7 @@ def tokenize_for_retrieval(text: str) -> set[str]:
     }
 
 
-def search_wikipedia_knowledge_base(query: str, limit: int = 3) -> list[dict[str, str]]:
+def score_wikipedia_articles(query: str, limit: int = 3) -> list[dict]:
     query_words = tokenize_for_retrieval(query)
     if not query_words:
         return []
@@ -190,10 +191,25 @@ def search_wikipedia_knowledge_base(query: str, limit: int = 3) -> list[dict[str
         score = (len(query_words & title_words) * 2) + len(query_words & text_words)
         matched_terms = query_words & (title_words | text_words)
         if score >= 2 or len(matched_terms) >= 2:
-            scored_entries.append((score, entry))
+            scored_entries.append(
+                {
+                    "entry": entry,
+                    "score": score,
+                    "matched_terms": sorted(matched_terms),
+                    "title_matches": sorted(query_words & title_words),
+                    "text_matches": sorted(query_words & text_words),
+                }
+            )
 
-    scored_entries.sort(key=lambda item: (-item[0], item[1]["title"]))
-    return [entry for _score, entry in scored_entries[:limit]]
+    scored_entries.sort(key=lambda item: (-item["score"], item["entry"]["title"]))
+    return scored_entries[:limit]
+
+
+def search_wikipedia_knowledge_base(query: str, limit: int = 3) -> list[dict[str, str]]:
+    return [
+        scored_entry["entry"]
+        for scored_entry in score_wikipedia_articles(query, limit)
+    ]
 
 
 def build_wikipedia_context(entries: list[dict[str, str]]) -> str:
@@ -342,6 +358,7 @@ def text_to_speech(request: TTSRequest):
 @app.post("/chat")
 def chat(request: ChatRequest):
     selected_model = request.model or OLLAMA_MODEL
+    retrieval_debug = None
     if request.knowledge_base == "none":
         messages = [
             {
@@ -359,9 +376,31 @@ def chat(request: ChatRequest):
         ]
         sources = None
     else:
-        retrieved_entries = search_wikipedia_knowledge_base(request.message)
+        if request.include_retrieval_debug:
+            scored_entries = score_wikipedia_articles(request.message)
+            retrieved_entries = [
+                scored_entry["entry"]
+                for scored_entry in scored_entries
+            ]
+            retrieval_debug = [
+                {
+                    "id": scored_entry["entry"]["id"],
+                    "title": scored_entry["entry"]["title"],
+                    "score": scored_entry["score"],
+                    "matched_terms": scored_entry["matched_terms"],
+                    "title_matches": scored_entry["title_matches"],
+                    "text_matches": scored_entry["text_matches"],
+                }
+                for scored_entry in scored_entries
+            ]
+        else:
+            retrieved_entries = search_wikipedia_knowledge_base(request.message)
+
         if not retrieved_entries:
-            return {"reply": UNKNOWN_WIKIPEDIA_ANSWER, "sources": []}
+            response = {"reply": UNKNOWN_WIKIPEDIA_ANSWER, "sources": []}
+            if retrieval_debug is not None:
+                response["retrieval_debug"] = retrieval_debug
+            return response
 
         rag_system_prompt = (
             "You are LUCID using the selected local Wikipedia knowledgebase.\n"
@@ -423,6 +462,8 @@ def chat(request: ChatRequest):
         chat_response = {"reply": data["message"]["content"]}
         if sources is not None:
             chat_response["sources"] = sources
+        if request.knowledge_base == "wikipedia" and retrieval_debug is not None:
+            chat_response["retrieval_debug"] = retrieval_debug
         return chat_response
     except (requests.RequestException, KeyError, ValueError):
         return {"reply": "LUCID could not reach the local model."}
