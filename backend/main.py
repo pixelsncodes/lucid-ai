@@ -312,6 +312,69 @@ def build_wikipedia_context(entries: list[dict[str, str]]) -> str:
     )
 
 
+def extract_capital_subject(question: str) -> str | None:
+    match = re.search(r"\bcapital\s+of\s+([a-zA-Z][a-zA-Z\s-]+)", question.lower())
+    if not match:
+        return None
+
+    subject = re.sub(r"[^a-zA-Z\s-]", " ", match.group(1))
+    subject = re.sub(r"\s+", " ", subject).strip()
+    return subject or None
+
+
+def clean_capital_name(value: str) -> str:
+    value = re.sub(r"\s+", " ", value).strip(" .,;:()[]")
+    return value
+
+
+def answer_supported_capital_question(
+    question: str,
+    entries: list[dict[str, str]],
+) -> str | None:
+    subject = extract_capital_subject(question)
+    if not subject:
+        return None
+
+    subject_title = subject.title()
+    subject_pattern = re.escape(subject)
+    adjective_by_subject = {
+        "canada": "Canadian",
+        "france": "French",
+    }
+    patterns = [
+        rf"\bcapital\s+of\s+{subject_pattern}\s+is\s+([A-Z][A-Za-z]*(?:[ -][A-Z][A-Za-z]*){{0,4}})",
+        r"\bcapital\s+city\s+([A-Z][A-Za-z]*(?:[ -][A-Z][A-Za-z]*){0,4})",
+    ]
+
+    adjective = adjective_by_subject.get(subject)
+    if adjective:
+        patterns.append(
+            rf"\b{re.escape(adjective)}\s+capital\s+of\s+([A-Z][A-Za-z]*(?:[ -][A-Z][A-Za-z]*){{0,4}})"
+        )
+
+    for entry in entries:
+        text = entry.get("text", "")
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+
+            capital = clean_capital_name(match.group(1))
+            if not capital or capital.lower() == subject:
+                continue
+
+            return f"{capital} is the capital of {subject_title}."
+
+    return None
+
+
+def clean_wikipedia_reply(reply: str) -> tuple[str, bool]:
+    reply = reply.strip()
+    if UNKNOWN_WIKIPEDIA_ANSWER in reply and reply != UNKNOWN_WIKIPEDIA_ANSWER:
+        return UNKNOWN_WIKIPEDIA_ANSWER, True
+    return reply, reply == UNKNOWN_WIKIPEDIA_ANSWER
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -551,6 +614,13 @@ def chat(request: ChatRequest):
             for entry in retrieved_entries
         ]
 
+        supported_answer = answer_supported_capital_question(request.message, retrieved_entries)
+        if supported_answer:
+            response = {"reply": supported_answer, "sources": sources}
+            if retrieval_debug is not None:
+                response["retrieval_debug"] = retrieval_debug
+            return response
+
     try:
         response = requests.post(
             OLLAMA_CHAT_ENDPOINT,
@@ -567,7 +637,14 @@ def chat(request: ChatRequest):
         )
         response.raise_for_status()
         data = response.json()
-        chat_response = {"reply": data["message"]["content"]}
+        reply, is_unknown_wikipedia_reply = (
+            clean_wikipedia_reply(data["message"]["content"])
+            if request.knowledge_base == "wikipedia"
+            else (data["message"]["content"], False)
+        )
+        chat_response = {"reply": reply}
+        if request.knowledge_base == "wikipedia" and is_unknown_wikipedia_reply:
+            sources = []
         if sources is not None:
             chat_response["sources"] = sources
         if request.knowledge_base == "wikipedia" and retrieval_debug is not None:

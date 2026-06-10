@@ -72,10 +72,29 @@ if check == "rag_france":
 elif check == "rag_atlantis":
     results = payload.get("results")
     ok = isinstance(results, list) and len(results) == 0
+elif check == "rag_michael_jackson":
+    results = payload.get("results")
+    ok = (
+        isinstance(results, list)
+        and bool(results)
+        and results[0].get("title") == "Michael Jackson"
+        and "singer" in results[0].get("text", "").lower()
+    )
 elif check == "chat_france":
     reply = payload.get("reply", "")
     sources = payload.get("sources")
     ok = isinstance(reply, str) and "paris" in reply.lower() and isinstance(sources, list) and bool(sources)
+elif check == "chat_canada":
+    reply = payload.get("reply", "")
+    sources = payload.get("sources")
+    ok = (
+        isinstance(reply, str)
+        and "ottawa" in reply.lower()
+        and unknown_answer not in reply
+        and "Title:" not in reply
+        and isinstance(sources, list)
+        and bool(sources)
+    )
 elif check == "chat_atlantis":
     reply = payload.get("reply", "")
     ok = reply == unknown_answer
@@ -121,12 +140,27 @@ else
   fail "/rag/search Atlantis request"
 fi
 
+rag_michael_jackson=$(curl_json GET "$backend_url/rag/search?q=What%20can%20you%20tell%20me%20about%20Michael%20Jackson%3F&limit=3" || true)
+if [[ -n "$rag_michael_jackson" ]]; then
+  run_json_check "/rag/search Michael Jackson returns article intro" "$rag_michael_jackson" "rag_michael_jackson"
+else
+  fail "/rag/search Michael Jackson request"
+fi
+
 chat_france_body='{"message":"What is the capital of France?","knowledge_base":"wikipedia"}'
 chat_france=$(curl_json POST "$backend_url/chat" "$chat_france_body" || true)
 if [[ -n "$chat_france" ]]; then
   run_json_check "/chat Wikipedia France mentions Paris" "$chat_france" "chat_france"
 else
   fail "/chat Wikipedia France request"
+fi
+
+chat_canada_body='{"message":"What is the capital of Canada?","knowledge_base":"wikipedia"}'
+chat_canada=$(curl_json POST "$backend_url/chat" "$chat_canada_body" || true)
+if [[ -n "$chat_canada" ]]; then
+  run_json_check "/chat Wikipedia Canada mentions Ottawa" "$chat_canada" "chat_canada"
+else
+  fail "/chat Wikipedia Canada request"
 fi
 
 chat_atlantis_body='{"message":"What is the capital of Atlantis?","knowledge_base":"wikipedia"}'

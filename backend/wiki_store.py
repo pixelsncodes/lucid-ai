@@ -35,6 +35,7 @@ FTS_STOP_WORDS = {
     "that",
     "the",
     "this",
+    "tell",
     "to",
     "used",
     "was",
@@ -46,6 +47,9 @@ FTS_STOP_WORDS = {
     "who",
     "why",
     "with",
+    "you",
+    "me",
+    "please",
 }
 
 
@@ -186,17 +190,45 @@ def is_useful_chunk(text: str) -> bool:
 
 
 def build_fts_query(query: str) -> str:
-    terms = re.findall(r"[a-zA-Z0-9]+", query.lower())
-    terms = [
-        term
-        for term in terms
-        if len(term) > 1 and term not in FTS_STOP_WORDS
-    ]
+    terms = query_terms(query)
 
     if not terms:
         return ""
 
     return " AND ".join(sorted(set(terms)))
+
+
+def query_terms(query: str) -> list[str]:
+    terms = re.findall(r"[a-zA-Z0-9]+", query.lower())
+    return [
+        term
+        for term in terms
+        if len(term) > 1 and term not in FTS_STOP_WORDS
+    ]
+
+
+def normalized_phrase(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-zA-Z0-9]+", " ", value.lower())).strip()
+
+
+def title_rank(title: str, query: str, terms: list[str]) -> int:
+    if not terms:
+        return 2
+
+    title_terms = query_terms(title)
+    title_term_set = set(title_terms)
+    query_term_set = set(terms)
+    normalized_title = normalized_phrase(title)
+    normalized_query = normalized_phrase(query)
+    query_term_phrase = " ".join(terms)
+
+    if normalized_title == query_term_phrase or (
+        normalized_title in normalized_query and query_term_set <= title_term_set
+    ):
+        return 0
+    if query_term_set and query_term_set <= title_term_set:
+        return 1
+    return 2
 
 
 def connect(index_path: Path = DEFAULT_INDEX_PATH) -> sqlite3.Connection:
@@ -284,9 +316,10 @@ def rebuild_index(
 
 def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PATH) -> list[dict[str, str]]:
     query = query.strip()
+    terms = query_terms(query)
     fts_query = build_fts_query(query)
     required_terms = required_title_terms(query)
-    search_limit = max(limit, limit * 10 if required_terms else limit)
+    search_limit = min(500, max(limit * 50, 100))
 
     if not fts_query or not index_path.exists():
         return []
@@ -300,6 +333,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
                 chunks.article_id,
                 chunks.title,
                 chunks.text,
+                chunks.chunk_index,
                 bm25(chunks_fts, 5.0, 1.0) AS score
             FROM chunks_fts
             JOIN chunks ON chunks_fts.rowid = chunks.rowid
@@ -316,11 +350,29 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
             "chunk_id": row["id"],
             "title": row["title"],
             "text": row["text"],
+            "_chunk_index": row["chunk_index"],
             "score": row["score"],
+            "_title_rank": title_rank(row["title"], query, terms),
         }
         for row in rows
         if title_matches_required_terms(row["title"], required_terms)
         and is_useful_chunk(row["text"])
     ]
 
-    return results[:limit]
+    results.sort(
+        key=lambda result: (
+            result["_title_rank"],
+            result["_chunk_index"] if result["_title_rank"] < 2 else 999999,
+            result["score"],
+        )
+    )
+    return [
+        {
+            "id": result["id"],
+            "chunk_id": result["chunk_id"],
+            "title": result["title"],
+            "text": result["text"],
+            "score": result["score"],
+        }
+        for result in results[:limit]
+    ]
