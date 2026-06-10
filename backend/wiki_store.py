@@ -176,6 +176,15 @@ def title_matches_required_terms(title: str, required_terms: list[str]) -> bool:
     return all(term in title_terms for term in required_terms)
 
 
+def is_useful_chunk(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if normalized in {"references", "reference", "sources", "external links", "related pages"}:
+        return False
+
+    word_count = len(re.findall(r"[a-zA-Z0-9]+", normalized))
+    return word_count >= 8
+
+
 def build_fts_query(query: str) -> str:
     terms = re.findall(r"[a-zA-Z0-9]+", query.lower())
     terms = [
@@ -311,6 +320,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
         }
         for row in rows
         if title_matches_required_terms(row["title"], required_terms)
+        and is_useful_chunk(row["text"])
     ]
 
     return results[:limit]
