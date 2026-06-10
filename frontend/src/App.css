@@ -571,10 +571,17 @@ button {
 .dock-toggle {
   flex: 0 0 auto;
   max-width: 100%;
+  cursor: pointer;
+  user-select: none;
 }
 
 .dock-toggle .control-label {
   white-space: nowrap;
+}
+
+.dock-toggle--disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .setting-field select,
@@ -769,14 +776,14 @@ button {
 }
 
 .setting-field select:disabled,
-.setting-field input:disabled,
-.dock-toggle input:disabled + .toggle-track {
+.setting-field input:disabled {
   color: var(--text-muted);
   cursor: not-allowed;
   opacity: 0.58;
 }
 
 .toggle-shell {
+  position: relative;
   min-height: 28px;
   display: flex;
   align-items: center;
@@ -802,6 +809,7 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.075);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.022);
+  cursor: inherit;
   transition:
     border-color 160ms ease,
     background 160ms ease;
