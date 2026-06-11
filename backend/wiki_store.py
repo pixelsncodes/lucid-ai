@@ -1,4 +1,5 @@
 import json
+import math
 import re
 import sqlite3
 from pathlib import Path
@@ -11,6 +12,8 @@ DEFAULT_INDEX_PATH = WIKIPEDIA_DIR / "wikipedia.sqlite3"
 WIKIPEDIA_FULL_DIR = BASE_DIR / "data" / "wikipedia-full"
 WIKIPEDIA_FULL_INDEX_PATH = WIKIPEDIA_FULL_DIR / "wikipedia-full.sqlite3"
 
+W_POP = 2.0
+W_TITLE = 8.0
 
 FTS_STOP_WORDS = {
     "a",
@@ -305,6 +308,31 @@ def title_rank(title: str, query: str, terms: list[str]) -> int:
     return 2
 
 
+def _has_article_meta(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='article_meta'"
+    ).fetchone()
+    return row is not None
+
+
+def _load_incoming_links(conn: sqlite3.Connection, slugs: list[str]) -> dict[str, int]:
+    if not slugs:
+        return {}
+    placeholders = ",".join("?" * len(slugs))
+    rows = conn.execute(
+        f"SELECT slug, incoming_links FROM article_meta WHERE slug IN ({placeholders})",
+        slugs,
+    ).fetchall()
+    return {row["slug"]: (row["incoming_links"] or 0) for row in rows}
+
+
+def _title_covered(title: str, query_term_set: set[str]) -> bool:
+    title_terms = set(query_terms(title))
+    # Require ≥2 title terms so single-word tokens left after stripping non-ASCII
+    # (e.g. "Météo" → nothing, leaving only "france") don't accidentally match.
+    return len(title_terms) >= 2 and title_terms <= query_term_set
+
+
 def connect(index_path: Path = DEFAULT_INDEX_PATH) -> sqlite3.Connection:
     index_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(index_path)
@@ -411,6 +439,7 @@ def run_fts_search(conn: sqlite3.Connection, fts_query: str, search_limit: int) 
 def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PATH) -> list[dict[str, str]]:
     query = query.strip()
     terms = query_terms(query)
+    query_term_set = set(terms)
     required_terms = required_title_terms(query)
     search_limit = min(500, max(limit * 50, 100))
 
@@ -418,6 +447,9 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
         return []
 
     filtered_rows: list[sqlite3.Row] = []
+    has_meta = False
+    incoming_links_map: dict[str, int] = {}
+
     with connect(index_path) as conn:
         initialize_index(conn)
 
@@ -440,6 +472,11 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
                 break
             attempt_terms = attempt_terms[:-1]
 
+        has_meta = _has_article_meta(conn)
+        if has_meta and filtered_rows:
+            distinct_slugs = list({row["article_id"] for row in filtered_rows})
+            incoming_links_map = _load_incoming_links(conn, distinct_slugs)
+
     results = [
         {
             "id": row["article_id"],
@@ -453,13 +490,24 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
         for row in filtered_rows
     ]
 
-    results.sort(
-        key=lambda result: (
-            result["_title_rank"],
-            result["_chunk_index"] if result["_title_rank"] < 2 else 999999,
-            result["score"],
+    if has_meta:
+        for result in results:
+            links = incoming_links_map.get(result["id"], 0)
+            covered = _title_covered(result["title"], query_term_set)
+            result["_adjusted_score"] = (
+                result["score"]
+                - W_POP * math.log1p(links)
+                - (W_TITLE if covered else 0.0)
+            )
+        results.sort(key=lambda r: r["_adjusted_score"])
+    else:
+        results.sort(
+            key=lambda result: (
+                result["_title_rank"],
+                result["_chunk_index"] if result["_title_rank"] < 2 else 999999,
+                result["score"],
+            )
         )
-    )
     return [
         {
             "id": result["id"],
