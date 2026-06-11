@@ -13,7 +13,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import requests
 
-from wiki_store import query_terms, required_title_terms, search_index, search_index_multi
+from wiki_store import (
+    DEFAULT_INDEX_PATH,
+    WIKIPEDIA_FULL_INDEX_PATH,
+    query_terms,
+    required_title_terms,
+    search_index,
+    search_index_multi,
+)
 
 from config import (
     DEFAULT_NUM_CTX,
@@ -75,7 +82,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = Field(default_factory=list, max_length=12)
-    knowledge_base: Literal["none", "wikipedia"] = "none"
+    knowledge_base: Literal["none", "wikipedia", "wikipedia-full"] = "none"
     include_retrieval_debug: bool = False
     model: Optional[str] = None
     temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, allow_inf_nan=False)
@@ -152,6 +159,11 @@ KNOWLEDGE_BASES = [
         "id": "wikipedia",
         "name": "Local Wikipedia",
         "description": "Use the local offline Wikipedia SQLite index.",
+    },
+    {
+        "id": "wikipedia-full",
+        "name": "Full Wikipedia (enwiki)",
+        "description": "Use the full English Wikipedia offline SQLite index.",
     },
 ]
 
@@ -322,12 +334,22 @@ def score_wikipedia_articles(query: str, limit: int = 3) -> list[dict]:
     return scored_entries[:limit]
 
 
-def search_wikipedia_knowledge_base(query: str, limit: int = 3) -> list[dict[str, str]]:
-    return search_index(query, limit)
+def get_wiki_index_path(knowledge_base: str) -> Path:
+    if knowledge_base == "wikipedia-full":
+        return WIKIPEDIA_FULL_INDEX_PATH
+    return DEFAULT_INDEX_PATH
 
 
-def search_wikipedia_knowledge_base_multi(queries: list[str]) -> list[dict[str, str]]:
-    return search_index_multi(queries, limit_per_query=2, total_limit=5)
+def search_wikipedia_knowledge_base(
+    query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PATH
+) -> list[dict[str, str]]:
+    return search_index(query, limit, index_path)
+
+
+def search_wikipedia_knowledge_base_multi(
+    queries: list[str], index_path: Path = DEFAULT_INDEX_PATH
+) -> list[dict[str, str]]:
+    return search_index_multi(queries, limit_per_query=2, total_limit=5, index_path=index_path)
 
 
 def build_wikipedia_context(entries: list[dict[str, str]]) -> str:
@@ -1346,11 +1368,15 @@ def plan_wikipedia_retrieval(
     return resolution
 
 
-def search_wikipedia_query_plan(plan: dict[str, object], limit_per_query: int = 3) -> list[dict[str, str]]:
+def search_wikipedia_query_plan(
+    plan: dict[str, object],
+    limit_per_query: int = 3,
+    index_path: Path = DEFAULT_INDEX_PATH,
+) -> list[dict[str, str]]:
     retrieved_entries = []
     seen_chunk_ids = set()
     for retrieval_query in plan["retrieval_queries"]:
-        for entry in search_wikipedia_knowledge_base(str(retrieval_query), limit_per_query):
+        for entry in search_wikipedia_knowledge_base(str(retrieval_query), limit_per_query, index_path):
             chunk_key = entry.get("chunk_id") or f"{entry.get('id')}:{entry.get('title')}:{entry.get('text', '')[:80]}"
             if chunk_key in seen_chunk_ids:
                 continue
@@ -1367,7 +1393,7 @@ def build_wikipedia_chat_debug(
 ) -> dict[str, object]:
     retrieval_queries = [str(query) for query in query_plan["retrieval_queries"]]
     return {
-        "knowledge_base": "wikipedia",
+        "knowledge_base": request.knowledge_base,
         "original_query": request.message,
         "standalone_question": query_plan["standalone_question"],
         "retrieval_queries": retrieval_queries,
@@ -1442,13 +1468,14 @@ def get_tts_voices():
 def search_rag(
     q: str = Query(..., min_length=1),
     limit: int = Query(default=3, ge=1, le=10),
-    knowledge_base: Literal["wikipedia"] = "wikipedia",
+    knowledge_base: Literal["wikipedia", "wikipedia-full"] = "wikipedia",
 ):
     query = q.strip()
     if not query:
         raise HTTPException(status_code=422, detail="q must not be empty")
 
-    results = search_wikipedia_knowledge_base(query, limit)
+    index_path = get_wiki_index_path(knowledge_base)
+    results = search_wikipedia_knowledge_base(query, limit, index_path)
     return {
         "knowledge_base": knowledge_base,
         "query": query,
@@ -1570,9 +1597,11 @@ def chat(request: ChatRequest):
         ]
         sources = None
     else:
+        wiki_index_path = get_wiki_index_path(request.knowledge_base)
         query_plan = plan_wikipedia_retrieval(request.message, request.history, selected_model)
         retrieved_entries = search_wikipedia_knowledge_base_multi(
-            [str(q) for q in query_plan["retrieval_queries"]]
+            [str(q) for q in query_plan["retrieval_queries"]],
+            index_path=wiki_index_path,
         )
         wikipedia_debug = build_wikipedia_chat_debug(request, query_plan, retrieved_entries)
         log_debug = dict(wikipedia_debug)
@@ -1668,7 +1697,7 @@ def chat(request: ChatRequest):
                 "model": selected_model,
                 "stream": False,
                 "options": {
-                    "temperature": 0.0 if request.knowledge_base == "wikipedia" else request.temperature,
+                    "temperature": 0.0 if request.knowledge_base != "none" else request.temperature,
                     "num_ctx": request.num_ctx,
                 },
                 "messages": messages,
@@ -1679,15 +1708,15 @@ def chat(request: ChatRequest):
         data = response.json()
         reply, is_unknown_wikipedia_reply = (
             clean_wikipedia_reply(data["message"]["content"])
-            if request.knowledge_base == "wikipedia"
+            if request.knowledge_base != "none"
             else (data["message"]["content"], False)
         )
         chat_response = {"reply": reply}
-        if request.knowledge_base == "wikipedia" and is_unknown_wikipedia_reply:
+        if request.knowledge_base != "none" and is_unknown_wikipedia_reply:
             sources = []
         if sources is not None:
             chat_response["sources"] = sources
-        if request.knowledge_base == "wikipedia":
+        if request.knowledge_base != "none":
             chat_response["debug"] = wikipedia_debug
             if retrieval_debug is not None:
                 chat_response["retrieval_debug"] = retrieval_debug

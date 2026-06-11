@@ -8,6 +8,9 @@ WIKIPEDIA_DIR = BASE_DIR / "data" / "wikipedia"
 DEFAULT_ARTICLES_PATH = WIKIPEDIA_DIR / "articles.json"
 DEFAULT_INDEX_PATH = WIKIPEDIA_DIR / "wikipedia.sqlite3"
 
+WIKIPEDIA_FULL_DIR = BASE_DIR / "data" / "wikipedia-full"
+WIKIPEDIA_FULL_INDEX_PATH = WIKIPEDIA_FULL_DIR / "wikipedia-full.sqlite3"
+
 
 FTS_STOP_WORDS = {
     "a",

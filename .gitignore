@@ -16,4 +16,12 @@ backend/data/wikipedia/*.xml.bz2
 backend/data/wikipedia/*.jsonl
 backend/data/wikipedia/imported-*.json
 backend/data/wikipedia/dumps/
+
+# Full English Wikipedia (enwiki) CirrusSearch import — generated, never committed
+backend/data/wikipedia-full/dumps/
+backend/data/wikipedia-full/*.sqlite3
+backend/data/wikipedia-full/*.sqlite3-wal
+backend/data/wikipedia-full/*.sqlite3-shm
+backend/data/wikipedia-full/*.import_state.json
+
 *:Zone.Identifier
