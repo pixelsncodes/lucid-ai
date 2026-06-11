@@ -206,6 +206,46 @@ RETRIEVAL_STOP_WORDS = {
     "would",
 }
 
+_FICTION_PAREN_TOKENS = {
+    "comics", "comic", "manga", "character", "fictional", "franchise",
+}
+_FICTION_FRANCHISES = {
+    "aquaman", "dc comics", "marvel", "star wars", "star trek",
+    "middle-earth", "warhammer", "doctor who",
+}
+_FICTION_STRONG_MARKERS = (
+    "in the dc universe", "in the marvel universe", "fictional", "comic book",
+)
+_FICTION_WEAK_MARKERS = (
+    "supervillain", "superhero", "graphic novel", "comic series", "storyline",
+)
+_FICTION_QUESTION_CUES = (
+    "in dc", "in marvel", "in the comics", "fictional", "in star wars",
+    "in star trek", "in the show", "in the movie", "in the film",
+    "in the game", "in the novel", "in the franchise",
+)
+
+
+def question_is_fiction_scoped(question: str) -> bool:
+    q = (question or "").lower()
+    if any(cue in q for cue in _FICTION_QUESTION_CUES):
+        return True
+    return any(f in q for f in _FICTION_FRANCHISES)
+
+
+def is_fictional_source(title: str, text: str = "") -> bool:
+    m = re.search(r"\(([^)]+)\)\s*$", (title or "").strip())
+    tag = m.group(1).strip().lower() if m else ""
+    if tag:
+        if tag in _FICTION_PAREN_TOKENS:
+            return True
+        if any(f in tag for f in _FICTION_FRANCHISES):
+            return True
+    body = (text or "").lower()
+    if any(mk in body for mk in _FICTION_STRONG_MARKERS):
+        return True
+    return sum(mk in body for mk in _FICTION_WEAK_MARKERS) >= 2
+
 
 def load_wikipedia_articles(path: Path = WIKIPEDIA_ARTICLES_PATH) -> list[dict[str, str]]:
     try:
@@ -1603,6 +1643,15 @@ def chat(request: ChatRequest):
             [str(q) for q in query_plan["retrieval_queries"]],
             index_path=wiki_index_path,
         )
+        # Fiction guard: for real-world questions, drop fictional-universe
+        # sources so a question with no real answer falls back instead of being
+        # answered from fiction. Fiction-scoped questions keep these sources.
+        if not question_is_fiction_scoped(request.message):
+            retrieved_entries = [
+                entry for entry in retrieved_entries
+                if not is_fictional_source(entry.get("title", ""), entry.get("text", ""))
+            ]
+
         wikipedia_debug = build_wikipedia_chat_debug(request, query_plan, retrieved_entries)
         log_debug = dict(wikipedia_debug)
         if query_plan.get("_planner_rejection"):
