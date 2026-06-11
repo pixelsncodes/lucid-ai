@@ -2,6 +2,7 @@ import ctypes
 import json
 import re
 import site
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -245,6 +246,48 @@ def is_fictional_source(title: str, text: str = "") -> bool:
     if any(mk in body for mk in _FICTION_STRONG_MARKERS):
         return True
     return sum(mk in body for mk in _FICTION_WEAK_MARKERS) >= 2
+
+
+def get_article_meta(slugs: list[str], index_path: Path) -> dict[str, dict]:
+    if not slugs:
+        return {}
+    try:
+        uri = f"file:{index_path}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        try:
+            placeholders = ",".join("?" * len(slugs))
+            rows = conn.execute(
+                f"SELECT slug, fiction_kind, incoming_links, popularity_score "
+                f"FROM article_meta WHERE slug IN ({placeholders})",
+                slugs,
+            ).fetchall()
+        finally:
+            conn.close()
+        return {
+            row[0]: {
+                "fiction_kind": row[1],
+                "incoming_links": row[2],
+                "popularity_score": row[3],
+            }
+            for row in rows
+        }
+    except Exception:
+        return {}
+
+
+def apply_fiction_filter(entries: list[dict], meta: dict[str, dict]) -> list[dict]:
+    filtered = []
+    for entry in entries:
+        slug = entry.get("id", "")
+        if slug in meta:
+            if meta[slug].get("fiction_kind") == "entity":
+                continue
+            # "work" or "none" → metadata wins, keep unconditionally
+        else:
+            if is_fictional_source(entry.get("title", ""), entry.get("text", "")):
+                continue
+        filtered.append(entry)
+    return filtered
 
 
 def load_wikipedia_articles(path: Path = WIKIPEDIA_ARTICLES_PATH) -> list[dict[str, str]]:
@@ -1647,10 +1690,9 @@ def chat(request: ChatRequest):
         # sources so a question with no real answer falls back instead of being
         # answered from fiction. Fiction-scoped questions keep these sources.
         if not question_is_fiction_scoped(request.message):
-            retrieved_entries = [
-                entry for entry in retrieved_entries
-                if not is_fictional_source(entry.get("title", ""), entry.get("text", ""))
-            ]
+            slugs = [entry.get("id", "") for entry in retrieved_entries]
+            meta = get_article_meta(slugs, wiki_index_path)
+            retrieved_entries = apply_fiction_filter(retrieved_entries, meta)
 
         wikipedia_debug = build_wikipedia_chat_debug(request, query_plan, retrieved_entries)
         log_debug = dict(wikipedia_debug)

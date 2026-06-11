@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from main import is_fictional_source, question_is_fiction_scoped
+from main import apply_fiction_filter, is_fictional_source, question_is_fiction_scoped
 
 _WIKIPEDIA_FULL_DB = Path(__file__).parent / "data" / "wikipedia-full" / "wikipedia-full.sqlite3"
 _BACKEND_URL = "http://127.0.0.1:8000"
@@ -55,6 +55,39 @@ def test_plain_atlantis_question_not_fiction_scoped():
 
 def test_dc_comics_atlantis_question_fiction_scoped():
     assert question_is_fiction_scoped("In DC Comics, what is the capital of Atlantis?") is True
+
+
+def test_apply_fiction_filter_entity_meta_dropped():
+    entries = [{"id": "atlantis-aquaman", "title": "Atlantis (Aquaman)", "text": "Atlantis is a city in DC."}]
+    meta = {"atlantis-aquaman": {"fiction_kind": "entity", "incoming_links": 100, "popularity_score": 0.5}}
+    assert apply_fiction_filter(entries, meta) == []
+
+
+def test_apply_fiction_filter_work_meta_kept_over_heuristic():
+    entry = {
+        "id": "atlantis-aquaman",
+        "title": "Atlantis (Aquaman)",
+        "text": "Atlantis is a fictional city in the DC Universe; its capital is Poseidonis.",
+    }
+    meta = {"atlantis-aquaman": {"fiction_kind": "work", "incoming_links": 100, "popularity_score": 0.5}}
+    assert is_fictional_source(entry["title"], entry["text"]) is True, "heuristic must flag it"
+    assert apply_fiction_filter([entry], meta) == [entry]
+
+
+def test_apply_fiction_filter_no_meta_heuristic_fictional_dropped():
+    entries = [
+        {
+            "id": "atlantis-aquaman",
+            "title": "Atlantis (Aquaman)",
+            "text": "Atlantis is a fictional city in the DC Universe; its capital is Poseidonis.",
+        }
+    ]
+    assert apply_fiction_filter(entries, {}) == []
+
+
+def test_apply_fiction_filter_no_meta_clean_kept():
+    entries = [{"id": "france", "title": "France", "text": "France is a country in Western Europe."}]
+    assert apply_fiction_filter(entries, {}) == entries
 
 
 def test_chat_atlantis_capital_falls_back_live():
