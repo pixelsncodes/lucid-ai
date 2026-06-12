@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
-import { ASSISTANT_NAME } from './identity'
+import { ASSISTANT_NAME, LAUGH_AUDIO_ENABLED, LAUGH_TEXT } from './identity'
 import { extractReplyFace } from './components/matrix/engine'
 import MatrixStage from './components/MatrixStage'
 import ChatBar from './components/ChatBar'
@@ -18,6 +18,9 @@ const MAX_HISTORY_MESSAGES = 12
 const MAX_HISTORY_CONTENT_LENGTH = 2000
 const MAX_RECORDING_SECONDS = 30
 const RESUME_LISTEN_DELAY_MS = 420
+const TTS_START_TIMEOUT_MS = 5000
+const LAUGH_PRE_BEAT_MS = 200      // brief pause before the laugh animation
+const LAUGH_ANIM_DURATION_MS = 1400 // how long the silent laugh animation runs
 const AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
 const API_BASE_URL = 'http://127.0.0.1:8000'
 const FALLBACK_KNOWLEDGE_BASES = [{ id: 'none', name: 'None' }]
@@ -509,11 +512,17 @@ function App() {
     let audio = null
     let audioUrl = ''
     let hasCleanedUp = false
+    let playingTimeoutId = null
     const cleanupSpeakMessage = ({ abortRequest = false, stopAudio = false } = {}) => {
       if (hasCleanedUp) {
         return
       }
       hasCleanedUp = true
+
+      if (playingTimeoutId !== null) {
+        window.clearTimeout(playingTimeoutId)
+        playingTimeoutId = null
+      }
 
       if (abortRequest) {
         controller.abort()
@@ -577,54 +586,68 @@ function App() {
       audioUrl = URL.createObjectURL(audioBlob)
       audio = new Audio(audioUrl)
 
-      // Joke contract: a reply tagged :D gets a beat of silence,
-      // a spoken "Ha ha!", and the laughing animation.
+      // Joke contract: a reply tagged :D gets a brief beat of silence then the
+      // two-frame laugh animation.  Audio is gated behind LAUGH_AUDIO_ENABLED in
+      // identity.js — flip it to true when a TTS engine pronounces laughs well.
       const playLaughClip = async () => {
         const run = { cancelled: false, audio: null, finish: null }
         laughRunRef.current = run
 
+        // Brief beat before the animation starts.
         await new Promise((resolve) => {
           run.finish = resolve
-          window.setTimeout(resolve, 380)
+          window.setTimeout(resolve, LAUGH_PRE_BEAT_MS)
         })
         if (run.cancelled) return
 
-        let clipUrl =
-          laughClipCacheRef.current?.voiceId === selectedVoiceId &&
-          laughClipCacheRef.current?.rate === speechRate
-            ? laughClipCacheRef.current.url
-            : null
-        if (!clipUrl) {
-          const laughPayload = { text: 'Ha ha!', rate: speechRate }
-          if (selectedVoiceId) {
-            laughPayload.voice_id = selectedVoiceId
-          }
-          const laughResponse = await fetch(`${API_BASE_URL}/tts`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(laughPayload),
-          })
-          if (!laughResponse.ok) {
-            throw new Error('Laugh TTS request failed')
-          }
-          const laughBlob = await laughResponse.blob()
-          clipUrl = URL.createObjectURL(laughBlob)
-          if (laughClipCacheRef.current?.url) {
-            URL.revokeObjectURL(laughClipCacheRef.current.url)
-          }
-          laughClipCacheRef.current = { voiceId: selectedVoiceId, rate: speechRate, url: clipUrl }
-        }
-        if (run.cancelled) return
-
-        const laughAudio = new Audio(clipUrl)
-        run.audio = laughAudio
         setIsLaughing(true)
-        await new Promise((resolve) => {
-          run.finish = resolve
-          laughAudio.addEventListener('ended', resolve, { once: true })
-          laughAudio.addEventListener('error', resolve, { once: true })
-          laughAudio.play().catch(resolve)
-        })
+
+        if (LAUGH_AUDIO_ENABLED) {
+          // ── audio path — re-enable when TTS laughs sound right ──────────
+          let clipUrl =
+            laughClipCacheRef.current?.voiceId === selectedVoiceId &&
+            laughClipCacheRef.current?.rate === speechRate &&
+            laughClipCacheRef.current?.text === LAUGH_TEXT
+              ? laughClipCacheRef.current.url
+              : null
+          if (!clipUrl) {
+            const laughPayload = { text: LAUGH_TEXT, rate: speechRate }
+            if (selectedVoiceId) {
+              laughPayload.voice_id = selectedVoiceId
+            }
+            const laughResponse = await fetch(`${API_BASE_URL}/tts`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(laughPayload),
+            })
+            if (!laughResponse.ok) {
+              throw new Error('Laugh TTS request failed')
+            }
+            const laughBlob = await laughResponse.blob()
+            clipUrl = URL.createObjectURL(laughBlob)
+            if (laughClipCacheRef.current?.url) {
+              URL.revokeObjectURL(laughClipCacheRef.current.url)
+            }
+            laughClipCacheRef.current = { voiceId: selectedVoiceId, rate: speechRate, text: LAUGH_TEXT, url: clipUrl }
+          }
+          if (run.cancelled) return
+
+          const laughAudio = new Audio(clipUrl)
+          run.audio = laughAudio
+          await new Promise((resolve) => {
+            run.finish = resolve
+            laughAudio.addEventListener('ended', resolve, { once: true })
+            laughAudio.addEventListener('error', resolve, { once: true })
+            laughAudio.play().catch(resolve)
+          })
+        } else {
+          // ── silent path — animation only, fixed duration ─────────────────
+          await new Promise((resolve) => {
+            run.finish = resolve
+            window.setTimeout(resolve, LAUGH_ANIM_DURATION_MS)
+          })
+        }
+
         setIsLaughing(false)
         if (laughRunRef.current === run) {
           laughRunRef.current = null
@@ -653,11 +676,35 @@ function App() {
 
       audio.addEventListener('ended', handleNaturalEnd, { once: true })
       audio.addEventListener('error', cleanupSpeakMessage, { once: true })
-      try {
-        await audio.play()
+      // Switch to speaking only when the first audio frame is audible.
+      audio.addEventListener('playing', () => {
+        if (playingTimeoutId !== null) {
+          window.clearTimeout(playingTimeoutId)
+          playingTimeoutId = null
+        }
         if (!hasCleanedUp && activeSpeechRef.current?.cleanup === cleanupSpeakMessage) {
           setSpeechStatus('playing')
         }
+      }, { once: true })
+      // Unexpected mid-speech pause (OS interrupt, resource loss) — drop out
+      // of speaking so the face can't get stuck in EQ mode.
+      audio.addEventListener('pause', () => {
+        if (!hasCleanedUp) {
+          cleanupSpeakMessage()
+        }
+      }, { once: true })
+      // Safety net: if 'playing' never fires (synthesis failure, hung /tts
+      // response), bail out of 'loading' / thinking state after a timeout.
+      playingTimeoutId = window.setTimeout(() => {
+        playingTimeoutId = null
+        if (!hasCleanedUp) {
+          cleanupSpeakMessage()
+        }
+      }, TTS_START_TIMEOUT_MS)
+      try {
+        await audio.play()
+        // Do NOT set speechStatus here — wait for the 'playing' event above,
+        // which fires only when the first audio frame is actually audible.
       } catch (error) {
         cleanupSpeakMessage()
         throw error
@@ -764,9 +811,9 @@ function App() {
   // ── derived ──
   const status = isRecording
     ? 'listening'
-    : isTranscribing || isSending
+    : isTranscribing || isSending || speechStatus === 'loading'
       ? 'thinking'
-      : speechStatus === 'playing' || speechStatus === 'loading'
+      : speechStatus === 'playing'
         ? 'speaking'
         : 'idle'
 

@@ -1,6 +1,6 @@
-# LUCID Project Handoff
+# SCRAP Project Handoff
 
-Project: LUCID, Local Unified Conversational Intelligence Desk
+Project: SCRAP, Salvaged Conversational Retro-Apocalyptic Processor
 
 GitHub:
 https://github.com/pixelsncodes/lucid-ai

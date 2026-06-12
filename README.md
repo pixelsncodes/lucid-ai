@@ -1,8 +1,8 @@
-# LUCID
+# SCRAP
 
-**Local Unified Conversational Intelligence Desk**
+**Salvaged Conversational Retro-Apocalyptic Processor**
 
-LUCID is a local-first AI assistant project designed for:
+SCRAP is a local-first AI assistant project designed for:
 
 - Offline LLM-powered conversation
 - Voice chat using local speech-to-text and text-to-speech
@@ -41,7 +41,7 @@ scripts/wiki_smoke_test.sh
 
 ## Offline Wikipedia ingestion
 
-Lucid can use a local SQLite FTS5 Wikipedia index for Wikipedia knowledgebase mode.
+SCRAP can use a local SQLite FTS5 Wikipedia index for Wikipedia knowledgebase mode.
 
 Seed corpus:
 - backend/data/wikipedia/articles.json

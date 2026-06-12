@@ -73,7 +73,7 @@ PY
 
 cd "$repo_root"
 
-echo "LUCID dev status"
+echo "SCRAP dev status"
 echo
 printf 'Repo:    %s\n' "$repo_root"
 printf 'Branch:  %s\n' "$(git branch --show-current 2>/dev/null || printf 'unknown')"

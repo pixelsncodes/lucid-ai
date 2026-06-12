@@ -1,5 +1,6 @@
 import ctypes
 import json
+import random
 import re
 import site
 import sqlite3
@@ -26,6 +27,8 @@ from wiki_store import (
 from config import (
     DEFAULT_NUM_CTX,
     DEFAULT_TEMPERATURE,
+    JOKE_COOLDOWN_TURNS,
+    JOKE_RANDOM_PROBABILITY,
     OLLAMA_BASE_URL,
     OLLAMA_CHAT_ENDPOINT,
     OLLAMA_MODEL,
@@ -38,10 +41,11 @@ from config import (
     TTS_MAX_TEXT_LENGTH,
     TTS_SENTENCE_SILENCE_SECONDS,
 )
+from jokes import format_explicit_joke, get_random_joke, is_explicit_joke_request
 from kokoro_tts import synthesize_wav_bytes as kokoro_synthesize_wav_bytes
 from tts_voices import public_voice_payload, resolve_voice
 
-app = FastAPI(title="LUCID Backend")
+app = FastAPI(title="SCRAP Backend")
 
 BASE_DIR = Path(__file__).parent
 WIKIPEDIA_ARTICLES_PATH = Path(__file__).parent / "data" / "wikipedia" / "articles.json"
@@ -179,6 +183,119 @@ KNOWLEDGE_BASES = [
 ]
 
 UNKNOWN_WIKIPEDIA_ANSWER = "I don't know from the selected Wikipedia knowledgebase."
+
+# Emotion tags — must stay in sync with frontend FACES keys in engine.js
+_EMOTION_TAGS = [
+    ":)", ":(", ";)", ":'(", ":D", ":P", ":/", ":|",
+    "^-^", ">:(", ":O", ":3", "8)", "-_-", "O_O", "T_T", ":*", "<3",
+]
+_TRAILING_TAG_RE = re.compile(
+    r"(?:(?:^|\s)(" + "|".join(re.escape(t) for t in sorted(_EMOTION_TAGS, key=len, reverse=True)) + r"))\s*$"
+)
+
+# Near-miss emoticons the model sometimes produces → nearest valid tag.
+# Keys are lowercase (lookup is always .lower()).  xD/XD → :P, never :D — :D
+# triggers the laugh animation and must only appear with an actual joke.
+_NEAR_MISS_MAP: dict[str, str] = {
+    ":-)": ":)",   ":-(": ":(",
+    ":-d": ":P",   ":-p": ":P",  ":-/": ":/",  ":-\\": ":/",
+    ":-|": ":|",   ":-o": ":O",  ":-s": ":/",  ":-*": ":*",
+    ":^)": ":)",   ":^(": ":(",
+    ":o":  ":O",   ":s":  ":/",  ":b":  ":P",  ":c": ":(",
+    ":d":  ":P",   ":p":  ":P",
+    "=)":  ":)",   "=(":  ":(",  "=d":  ":P",  "=p": ":P",  "=/": ":/",
+    "xd":  ":P",   "xp":  ":P",
+    "d:":  ":(",   "c:":  ":(",
+    ">_<": ":/",   ">.<": ":/",
+    "^_^": "^-^",  "o_o": "O_O", "0_0": "O_O", "t_t": "T_T",
+}
+
+# Detects stray/invalid emoticon-like tokens at the very end of a string.
+# Requires preceding whitespace (or start-of-string) so it never fires inside
+# words or URLs.  Applied only after _TRAILING_TAG_RE fails to find a valid tag.
+_STRAY_EMOTE_RE = re.compile(
+    r"(?:^|\s)"
+    r"("
+    r":-?[)(\|/\\DdPpSsOoBbCco*]"  # colon ±dash: :-) :S :-D :-/ :o etc.
+    r"|=[-]?[)(\|DdPpSs/]"          # equals: =) =D =( =/ etc.
+    r"|[xX][-_]?[dDpP]"             # xD XD xP x-D etc.
+    r"|[dDcC]:"                      # D: d: C: (reverse faces)
+    r"|>_<|>\.<"                     # frustration faces
+    r"|\^_\^"                        # ^_^ (near-miss for ^-^)
+    r"|[oO][_][oO]"                  # o_o (near-miss for O_O)
+    r"|0[_]0"                        # 0_0
+    r"|[tT][_][tT]"                  # t_t (near-miss for T_T)
+    r"|=_="                          # =_= tired/deadpan (no mapping → default)
+    r")"
+    r"\s*$"
+)
+
+
+def _strip_trailing_strays(text: str) -> tuple[str, str | None]:
+    """Strip stray emoticon token(s) from the tail of *text*.
+
+    Returns (cleaned_text, first_stripped_token).  The first stripped token is
+    the rightmost one — the one the model most recently wrote — used for
+    near-miss mapping.
+    """
+    first: str | None = None
+    while True:
+        m = _STRAY_EMOTE_RE.search(text)
+        if not m:
+            break
+        # If the stray pattern happens to match a real valid tag (e.g. ":)" is a
+        # subset of the colon-dash class), stop here so we don't strip it.
+        if _TRAILING_TAG_RE.search(text):
+            break
+        if first is None:
+            first = m.group(1)
+        text = text[: m.start()].rstrip()
+    return text, first
+
+
+def normalize_reply_tag(reply: str, joke_mode: bool = False) -> str:
+    """Ensure a no-KB reply ends with exactly one valid emotion tag.
+
+    Handles four scenarios:
+    - Valid trailing tag, nothing stray before it → return as-is.
+    - Valid trailing tag, stray emote(s) before it (e.g. ":S :)") → strip the
+      strays, keep the valid tag the model appended last.
+    - No valid trailing tag, stray present → strip strays; in joke_mode always
+      yield :D; otherwise map the rightmost stray to a valid tag if recognised,
+      else fall back to the default.
+    - No valid tag, no stray → append default (:D if joke_mode, else :)).
+
+    Only call this for knowledge_base == 'none' replies.
+    """
+    stripped = reply.rstrip()
+    default_tag = ":D" if joke_mode else ":)"
+
+    valid_m = _TRAILING_TAG_RE.search(stripped)
+    if valid_m:
+        before_valid = stripped[: valid_m.start()].rstrip()
+        if not _STRAY_EMOTE_RE.search(before_valid):
+            return stripped  # clean — valid tag with no stray before it
+        # Stray emote(s) before a valid tag (e.g. "text :S :)") — strip them.
+        cleaned, _ = _strip_trailing_strays(before_valid)
+        valid_tag = valid_m.group(1)
+        return f"{cleaned} {valid_tag}" if cleaned else valid_tag
+
+    # No valid trailing tag — strip any strays, then re-check and map.
+    cleaned, first_stray = _strip_trailing_strays(stripped)
+
+    # Re-check: stripping a stray may reveal a valid tag buried under it
+    # (e.g. ":) :S" → strip :S → ":)" is now the trailing valid tag).
+    if _TRAILING_TAG_RE.search(cleaned):
+        return cleaned
+
+    # joke_mode always yields :D — the model was explicitly told to tell a joke.
+    if joke_mode:
+        tag = default_tag
+    else:
+        tag = (first_stray and _NEAR_MISS_MAP.get(first_stray.lower())) or default_tag
+    return f"{cleaned} {tag}" if cleaned else tag
+
+
 RETRIEVAL_STOP_WORDS = {
     "a",
     "an",
@@ -1518,9 +1635,9 @@ app.add_middleware(
 @app.get("/")
 def read_root():
     return {
-        "name": "LUCID",
+        "name": "SCRAP",
         "status": "backend running",
-        "description": "Local Unified Conversational Intelligence Desk"
+        "description": "Salvaged Conversational Retro-Apocalyptic Processor",
     }
 
 
@@ -1711,15 +1828,51 @@ def text_to_speech(request: TTSRequest):
             temp_wav_path.unlink(missing_ok=True)
 
 
+def _joke_cooldown_met(history: list[ChatMessage]) -> bool:
+    """Return True when enough turns have passed since the last joke (:D reply)."""
+    assistant_seen = 0
+    for msg in reversed(history):
+        if msg.role != "assistant":
+            continue
+        if assistant_seen >= JOKE_COOLDOWN_TURNS:
+            break
+        if msg.content.rstrip().endswith(":D"):
+            return False
+        assistant_seen += 1
+    return True
+
+
 @app.post("/chat")
 def chat(request: ChatRequest):
     selected_model = request.model or OLLAMA_MODEL
     retrieval_debug = None
+
+    random_joke: dict | None = None
     if request.knowledge_base == "none":
+        # ── Explicit joke trigger: return corpus joke directly, no LLM ───
+        if is_explicit_joke_request(request.message):
+            joke = get_random_joke()
+            if joke:
+                return {"reply": format_explicit_joke(joke)}
+        # ── Random injection: 8% chance, cooldown-gated ───────────────────
+        if (
+            _joke_cooldown_met(request.history)
+            and random.random() < JOKE_RANDOM_PROBABILITY
+        ):
+            random_joke = get_random_joke()
+
+        system_content = SYSTEM_PROMPT
+        if random_joke:
+            system_content = (
+                SYSTEM_PROMPT
+                + f"\n\n[JOKE DELIVERY] Work this dad joke naturally into your response: "
+                f"Setup: {random_joke['setup']} Punchline: {random_joke['punchline']}. "
+                "Your reply MUST end with :D."
+            )
         messages = [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT,
+                "content": system_content,
             },
             *[
                 {
@@ -1762,7 +1915,7 @@ def chat(request: ChatRequest):
             return response
 
         rag_system_prompt = (
-            "You are LUCID using the selected local Wikipedia knowledgebase.\n"
+            "You are SCRAP using the selected local Wikipedia knowledgebase.\n"
             "Answer only using facts explicitly present in the provided Wikipedia context.\n"
             "Reuse only wording and facts from the provided Wikipedia context.\n"
             "Do not use outside knowledge.\n"
@@ -1852,7 +2005,7 @@ def chat(request: ChatRequest):
         reply, is_unknown_wikipedia_reply = (
             clean_wikipedia_reply(data["message"]["content"])
             if request.knowledge_base != "none"
-            else (data["message"]["content"], False)
+            else (normalize_reply_tag(data["message"]["content"], joke_mode=bool(random_joke)), False)
         )
         chat_response = {"reply": reply}
         if request.knowledge_base != "none" and is_unknown_wikipedia_reply:
@@ -1865,4 +2018,4 @@ def chat(request: ChatRequest):
                 chat_response["retrieval_debug"] = retrieval_debug
         return chat_response
     except (requests.RequestException, KeyError, ValueError):
-        return {"reply": "LUCID could not reach the local model."}
+        return {"reply": "SCRAP could not reach the local model."}

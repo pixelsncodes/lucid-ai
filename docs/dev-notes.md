@@ -1,4 +1,4 @@
-# LUCID Development Notes
+# SCRAP Development Notes
 
 ## Current Build
 
@@ -11,7 +11,7 @@
 
 ## Next Major Milestones
 
-1. Improve LUCID's system prompt and personality.
+1. Improve SCRAP's system prompt and personality.
 2. Add model selection support.
 3. Add local project-folder RAG.
 4. Add voice input and local TTS.
