@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """
-Build or refresh the article_meta side table in the wikipedia-full SQLite DB.
+Build or refresh article_meta / article_redirects side tables in the
+wikipedia-full SQLite DB.
 
 Streams the retained CirrusSearch dump(s) and writes per-article metadata
-(incoming_links, popularity_score, fiction_kind) without touching the chunks
-or FTS tables.  Pass is idempotent via INSERT OR REPLACE; re-run freely after
-an interrupted attempt.
+without touching the chunks or FTS tables.  Both passes are idempotent;
+re-run freely after an interrupted attempt.
 
 Usage:
-  # Trial run — throwaway DB, first part-file only:
+  # Trial meta run — throwaway DB, first part-file only:
   python augment_wikipedia_meta.py --limit 50000 --db /tmp/meta_trial.sqlite3
 
-  # Full pass against the real DB:
+  # Full meta pass against the real DB:
   python augment_wikipedia_meta.py
+
+  # Redirects-only trial (article_meta already built):
+  python augment_wikipedia_meta.py --redirects-only --limit 50000 --db /tmp/redirects_trial.sqlite3
+
+  # Full redirects pass:
+  python augment_wikipedia_meta.py --redirects-only
 """
 
 import argparse
@@ -237,6 +243,15 @@ def collect_input_files(input_path: Path) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Redirect alias normalization
+# ---------------------------------------------------------------------------
+
+def normalize_alias(title: str) -> str:
+    """Lowercase and collapse whitespace — used as the lookup key in article_redirects."""
+    return re.sub(r"\s+", " ", title.strip()).lower()
+
+
+# ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
 
@@ -272,10 +287,31 @@ _INSERT_SQL = (
     " VALUES (?,?,?,?,?,?)"
 )
 
+_INSERT_REDIRECT_SQL = (
+    "INSERT OR IGNORE INTO article_redirects (name_norm, slug) VALUES (?,?)"
+)
+
+
+def init_redirects_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS article_redirects (
+            name_norm TEXT,
+            slug      TEXT,
+            PRIMARY KEY (name_norm, slug)
+        )
+    """)
+    conn.commit()
+
 
 def _flush(conn: sqlite3.Connection, batch: list) -> None:
     if batch:
         conn.executemany(_INSERT_SQL, batch)
+        conn.commit()
+
+
+def _flush_redirects(conn: sqlite3.Connection, batch: list) -> None:
+    if batch:
+        conn.executemany(_INSERT_REDIRECT_SQL, batch)
         conn.commit()
 
 
@@ -382,6 +418,130 @@ def run_augment(
 
 
 # ---------------------------------------------------------------------------
+# Redirects augmentation pass
+# ---------------------------------------------------------------------------
+
+def run_redirects(
+    input_path: Path,
+    db_path: Path,
+    limit: int | None,
+    batch_size: int,
+) -> None:
+    files = collect_input_files(input_path)
+    if not files:
+        print(f"ERROR: no .json.bz2/.json.gz files found under {input_path}", file=sys.stderr)
+        sys.exit(1)
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        PRAGMA cache_size=-131072;
+        PRAGMA temp_store=MEMORY;
+        PRAGMA mmap_size=2147483648;
+    """)
+    init_redirects_table(conn)
+
+    print(f"  DB:     {db_path}")
+    print(f"  Input:  {input_path}")
+    print(f"  Files:  {len(files)} part(s)")
+    print(f"  limit={limit or 'none'}  batch_size={batch_size}")
+    print()
+
+    batch: list = []
+    total_articles = 0
+    total_aliases = 0
+    start = time.monotonic()
+    done = False
+
+    for file_idx, file_path in enumerate(files):
+        if done:
+            break
+
+        print(f"  [{file_idx + 1}/{len(files)}] {file_path.name} ...", flush=True)
+        file_articles = 0
+
+        for _action, doc in iter_cirrussearch_pairs(file_path):
+            if not isinstance(doc, dict):
+                continue
+            if doc.get("namespace") != 0:
+                continue
+
+            title = str(doc.get("title", "")).strip()
+            if not title:
+                continue
+
+            slug = slugify(title)
+
+            # Own-title alias
+            own_norm = normalize_alias(title)
+            batch.append((own_norm, slug))
+            alias_count = 1
+
+            # Namespace-0 redirect aliases
+            for redir in (doc.get("redirect") or []):
+                if not isinstance(redir, dict):
+                    continue
+                if redir.get("namespace") != 0:
+                    continue
+                rtitle = str(redir.get("title", "")).strip()
+                if not rtitle:
+                    continue
+                batch.append((normalize_alias(rtitle), slug))
+                alias_count += 1
+
+            if slug in PROBE_SLUGS:
+                probe_aliases = [normalize_alias(r["title"]) for r in (doc.get("redirect") or [])
+                                 if isinstance(r, dict) and r.get("namespace") == 0 and r.get("title")]
+                print(
+                    f"PROBE: {slug} -> own_norm={own_norm!r}"
+                    f" redirect_aliases={probe_aliases}",
+                    flush=True,
+                )
+
+            total_aliases += alias_count
+            total_articles += 1
+            file_articles += 1
+
+            if len(batch) >= batch_size:
+                _flush_redirects(conn, batch)
+                batch = []
+
+            if total_articles % 50_000 == 0:
+                elapsed = time.monotonic() - start
+                rate = total_articles / elapsed if elapsed > 0 else 0
+                print(
+                    f"  [{total_articles:>8,} articles | {total_aliases:>10,} aliases"
+                    f" | {rate:>6.0f} art/s | DB: {_human_size(db_path)}]",
+                    flush=True,
+                )
+
+            if limit is not None and total_articles >= limit:
+                done = True
+                break
+
+        _flush_redirects(conn, batch)
+        batch = []
+        print(f"    {file_articles:,} articles from this file", flush=True)
+
+    print("  Building index on name_norm ...", flush=True)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_redirects_name_norm"
+        " ON article_redirects(name_norm)"
+    )
+    conn.commit()
+    conn.close()
+
+    elapsed = time.monotonic() - start
+    rate_str = f"{total_articles / elapsed:.0f} art/s" if elapsed > 0 else "?"
+    ratio = total_aliases / total_articles if total_articles else 0
+    print(f"\n  Done: {total_articles:,} articles, {total_aliases:,} alias rows"
+          f" ({ratio:.2f} aliases/article) in {elapsed:.1f}s ({rate_str})")
+    print(f"  DB:   {db_path}  ({_human_size(db_path)})")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -416,14 +576,27 @@ def main() -> None:
         metavar="N",
         help=f"Commit every N rows (default: {DEFAULT_BATCH_SIZE})",
     )
+    parser.add_argument(
+        "--redirects-only",
+        action="store_true",
+        help="Write only article_redirects; skip article_meta work",
+    )
     args = parser.parse_args()
 
-    run_augment(
-        input_path=args.input,
-        db_path=args.db,
-        limit=args.limit,
-        batch_size=args.batch_size,
-    )
+    if args.redirects_only:
+        run_redirects(
+            input_path=args.input,
+            db_path=args.db,
+            limit=args.limit,
+            batch_size=args.batch_size,
+        )
+    else:
+        run_augment(
+            input_path=args.input,
+            db_path=args.db,
+            limit=args.limit,
+            batch_size=args.batch_size,
+        )
 
 
 if __name__ == "__main__":

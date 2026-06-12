@@ -105,3 +105,27 @@ def test_chat_atlantis_capital_falls_back_live():
         f"Expected fallback reply, got: {data['reply']!r}"
     )
     assert data.get("sources") == [], f"Expected empty sources, got: {data.get('sources')!r}"
+
+
+def test_chat_einstein_university_answered_live():
+    """Entity-boost acceptance gate: 'What university did Einstein attend?' must surface the Albert Einstein article."""
+    _require_live_backend()
+    import requests
+    resp = requests.post(
+        f"{_BACKEND_URL}/chat",
+        json={"message": "What university did Einstein attend?", "knowledge_base": "wikipedia-full", "history": []},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    reply = data.get("reply", "")
+    sources = data.get("sources", [])
+    source_ids = [s.get("id", "") for s in sources]
+
+    eth_phrases = ["eth zurich", "swiss federal", "zurich polytechnic", "university of zurich"]
+    assert any(p in reply.lower() for p in eth_phrases), (
+        f"Expected reply to name Zurich Polytechnic / ETH Zurich / Swiss Federal; got: {reply!r}"
+    )
+    assert any("albert-einstein" in sid for sid in source_ids), (
+        f"Expected Albert Einstein article in sources; got: {source_ids}"
+    )

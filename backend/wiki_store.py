@@ -14,6 +14,7 @@ WIKIPEDIA_FULL_INDEX_PATH = WIKIPEDIA_FULL_DIR / "wikipedia-full.sqlite3"
 
 W_POP = 2.0
 W_TITLE = 8.0
+W_ENTITY = 12.0
 
 FTS_STOP_WORDS = {
     "a",
@@ -326,6 +327,45 @@ def _load_incoming_links(conn: sqlite3.Connection, slugs: list[str]) -> dict[str
     return {row["slug"]: (row["incoming_links"] or 0) for row in rows}
 
 
+def _has_article_redirects(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='article_redirects'"
+    ).fetchone()
+    return row is not None
+
+
+def _build_alias_ngrams(terms: list[str]) -> list[tuple[str, int]]:
+    ngrams: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    for n in range(1, min(5, len(terms) + 1)):
+        for i in range(len(terms) - n + 1):
+            phrase = " ".join(terms[i : i + n])
+            if phrase not in seen:
+                seen.add(phrase)
+                ngrams.append((phrase, n))
+    return ngrams
+
+
+def _load_entity_boosts(
+    conn: sqlite3.Connection, ngrams: list[tuple[str, int]]
+) -> dict[str, int]:
+    if not ngrams:
+        return {}
+    phrase_to_count = {phrase: count for phrase, count in ngrams}
+    placeholders = ",".join("?" * len(phrase_to_count))
+    rows = conn.execute(
+        f"SELECT name_norm, slug FROM article_redirects WHERE name_norm IN ({placeholders})",
+        list(phrase_to_count),
+    ).fetchall()
+    slug_best: dict[str, int] = {}
+    for row in rows:
+        slug = row["slug"]
+        count = phrase_to_count.get(row["name_norm"], 1)
+        if count > slug_best.get(slug, 0):
+            slug_best[slug] = count
+    return slug_best
+
+
 def _title_covered(title: str, query_term_set: set[str]) -> bool:
     title_terms = set(query_terms(title))
     # Require ≥2 title terms so single-word tokens left after stripping non-ASCII
@@ -449,6 +489,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
     filtered_rows: list[sqlite3.Row] = []
     has_meta = False
     incoming_links_map: dict[str, int] = {}
+    entity_boost_map: dict[str, int] = {}
 
     with connect(index_path) as conn:
         initialize_index(conn)
@@ -503,6 +544,8 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
         if has_meta and filtered_rows:
             distinct_slugs = list({row["article_id"] for row in filtered_rows})
             incoming_links_map = _load_incoming_links(conn, distinct_slugs)
+            if _has_article_redirects(conn) and terms:
+                entity_boost_map = _load_entity_boosts(conn, _build_alias_ngrams(terms))
 
     results = [
         {
@@ -525,6 +568,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
                 result["score"]
                 - W_POP * math.log1p(links)
                 - (W_TITLE if covered else 0.0)
+                - W_ENTITY * entity_boost_map.get(result["id"], 0)
             )
         results.sort(key=lambda r: r["_adjusted_score"])
     else:

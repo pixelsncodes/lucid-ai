@@ -22,6 +22,11 @@ PROBES = [
         "target": "albert-einstein",
     },
     {
+        "label": "Einstein attendance (acceptance phrasing)",
+        "query": "What university did Einstein attend?",
+        "target": "albert-einstein",
+    },
+    {
         "label": "Capital of France",
         "query": "capital of France",
         "targets": ["paris", "list-of-capitals-of-france"],
