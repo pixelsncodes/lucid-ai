@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
-import { ASSISTANT_NAME, LAUGH_AUDIO_ENABLED, LAUGH_TEXT } from './identity'
+import { ASSISTANT_NAME, LAUGH_AUDIO_ENABLED } from './identity'
 import { extractReplyFace } from './components/matrix/engine'
 import MatrixStage from './components/MatrixStage'
 import ChatBar from './components/ChatBar'
@@ -19,8 +19,7 @@ const MAX_HISTORY_CONTENT_LENGTH = 2000
 const MAX_RECORDING_SECONDS = 30
 const RESUME_LISTEN_DELAY_MS = 420
 const TTS_START_TIMEOUT_MS = 5000
-const LAUGH_PRE_BEAT_MS = 200      // brief pause before the laugh animation
-const LAUGH_ANIM_DURATION_MS = 1400 // how long the silent laugh animation runs
+const LAUGH_PRE_BEAT_MS = 200
 const AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
 const API_BASE_URL = 'http://127.0.0.1:8000'
 const FALLBACK_KNOWLEDGE_BASES = [{ id: 'none', name: 'None' }]
@@ -83,9 +82,24 @@ function App() {
   const autoSpokenMessageIdsRef = useRef(new Set())
   const activeSpeechRef = useRef(null)
   const laughRunRef = useRef(null)
-  const laughClipCacheRef = useRef(null) // { voiceId, url }
+  const haHaAudioRef = useRef(null)
+  const baDumTssAudioRef = useRef(null)
 
   const markInteraction = useCallback(() => setLastInteraction(Date.now()), [])
+
+  // Preload sfx clips so the first joke isn't silent.
+  useEffect(() => {
+    const haHa = new Audio('/sfx/ha-ha-01.mp3')
+    haHa.preload = 'auto'
+    haHaAudioRef.current = haHa
+    const baDumTss = new Audio('/sfx/ba-dum-tss.mp3')
+    baDumTss.preload = 'auto'
+    baDumTssAudioRef.current = baDumTss
+    return () => {
+      haHa.src = ''
+      baDumTss.src = ''
+    }
+  }, [])
 
   const clearRecordingTimeout = () => {
     if (recordingTimeoutRef.current) {
@@ -309,6 +323,7 @@ function App() {
         role: 'assistant',
         text: cleanedText,
         face,
+        sfx: data.sfx || null,
         sources: Array.isArray(data.sources) ? data.sources : [],
         autoSpeak: autoSpeakRef.current,
       }
@@ -586,14 +601,24 @@ function App() {
       audioUrl = URL.createObjectURL(audioBlob)
       audio = new Audio(audioUrl)
 
-      // Joke contract: a reply tagged :D gets a brief beat of silence then the
-      // two-frame laugh animation.  Audio is gated behind LAUGH_AUDIO_ENABLED in
-      // identity.js — flip it to true when a TTS engine pronounces laughs well.
+      // Play the ba-dum-tss rimshot (explicit corpus jokes only).
+      const playBaDumTss = () => {
+        const clip = baDumTssAudioRef.current
+        if (!clip) return Promise.resolve()
+        clip.currentTime = 0
+        return new Promise((resolve) => {
+          clip.addEventListener('ended', resolve, { once: true })
+          clip.addEventListener('error', resolve, { once: true })
+          clip.play().catch(resolve)
+        })
+      }
+
+      // Joke contract: a reply tagged :D gets a brief beat → laugh animation in
+      // sync with ha-ha-01.  LAUGH_AUDIO_ENABLED in identity.js is a kill switch.
       const playLaughClip = async () => {
         const run = { cancelled: false, audio: null, finish: null }
         laughRunRef.current = run
 
-        // Brief beat before the animation starts.
         await new Promise((resolve) => {
           run.finish = resolve
           window.setTimeout(resolve, LAUGH_PRE_BEAT_MS)
@@ -602,49 +627,20 @@ function App() {
 
         setIsLaughing(true)
 
-        if (LAUGH_AUDIO_ENABLED) {
-          // ── audio path — re-enable when TTS laughs sound right ──────────
-          let clipUrl =
-            laughClipCacheRef.current?.voiceId === selectedVoiceId &&
-            laughClipCacheRef.current?.rate === speechRate &&
-            laughClipCacheRef.current?.text === LAUGH_TEXT
-              ? laughClipCacheRef.current.url
-              : null
-          if (!clipUrl) {
-            const laughPayload = { text: LAUGH_TEXT, rate: speechRate }
-            if (selectedVoiceId) {
-              laughPayload.voice_id = selectedVoiceId
-            }
-            const laughResponse = await fetch(`${API_BASE_URL}/tts`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(laughPayload),
-            })
-            if (!laughResponse.ok) {
-              throw new Error('Laugh TTS request failed')
-            }
-            const laughBlob = await laughResponse.blob()
-            clipUrl = URL.createObjectURL(laughBlob)
-            if (laughClipCacheRef.current?.url) {
-              URL.revokeObjectURL(laughClipCacheRef.current.url)
-            }
-            laughClipCacheRef.current = { voiceId: selectedVoiceId, rate: speechRate, text: LAUGH_TEXT, url: clipUrl }
-          }
-          if (run.cancelled) return
-
-          const laughAudio = new Audio(clipUrl)
-          run.audio = laughAudio
+        if (LAUGH_AUDIO_ENABLED && haHaAudioRef.current) {
+          const haHa = haHaAudioRef.current
+          haHa.currentTime = 0
+          run.audio = haHa
           await new Promise((resolve) => {
             run.finish = resolve
-            laughAudio.addEventListener('ended', resolve, { once: true })
-            laughAudio.addEventListener('error', resolve, { once: true })
-            laughAudio.play().catch(resolve)
+            haHa.addEventListener('ended', resolve, { once: true })
+            haHa.addEventListener('error', resolve, { once: true })
+            haHa.play().catch(resolve)
           })
         } else {
-          // ── silent path — animation only, fixed duration ─────────────────
           await new Promise((resolve) => {
             run.finish = resolve
-            window.setTimeout(resolve, LAUGH_ANIM_DURATION_MS)
+            window.setTimeout(resolve, 1400)
           })
         }
 
@@ -657,6 +653,9 @@ function App() {
       const handleNaturalEnd = async () => {
         if (chatMessage.face === ':D') {
           try {
+            if (chatMessage.sfx === 'badumtss') {
+              await playBaDumTss()
+            }
             await playLaughClip()
           } catch {
             setIsLaughing(false)

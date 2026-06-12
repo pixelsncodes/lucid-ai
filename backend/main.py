@@ -41,7 +41,7 @@ from config import (
     TTS_MAX_TEXT_LENGTH,
     TTS_SENTENCE_SILENCE_SECONDS,
 )
-from jokes import format_explicit_joke, get_random_joke, is_explicit_joke_request
+from jokes import build_explicit_joke_response, format_explicit_joke, get_random_joke, is_explicit_joke_request
 from kokoro_tts import synthesize_wav_bytes as kokoro_synthesize_wav_bytes
 from tts_voices import public_voice_payload, resolve_voice
 
@@ -1853,7 +1853,7 @@ def chat(request: ChatRequest):
         if is_explicit_joke_request(request.message):
             joke = get_random_joke()
             if joke:
-                return {"reply": format_explicit_joke(joke)}
+                return build_explicit_joke_response(joke)
         # ── Random injection: 8% chance, cooldown-gated ───────────────────
         if (
             _joke_cooldown_met(request.history)

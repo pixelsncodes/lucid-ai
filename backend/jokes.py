@@ -53,6 +53,11 @@ def format_explicit_joke(joke: dict) -> str:
     return f"{intro} {body} :D" if intro else f"{body} :D"
 
 
+def build_explicit_joke_response(joke: dict) -> dict:
+    """Build the /chat response dict for a corpus joke (Path 1 direct serve)."""
+    return {"reply": format_explicit_joke(joke), "sfx": "badumtss"}
+
+
 # Keywords that trigger explicit joke delivery
 _JOKE_KEYWORDS = (
     "tell me a joke",
