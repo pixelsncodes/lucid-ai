@@ -13,9 +13,9 @@ find_repo_root() {
 
 repo_root=$(find_repo_root)
 backend_url=${BACKEND_URL:-http://127.0.0.1:8000}
-default_voice_id="ryan-medium"
-default_voice_model_file="en_US-ryan-medium.onnx"
-default_voice_config_file="en_US-ryan-medium.onnx.json"
+default_voice_id="heart"
+kokoro_model_file="models/kokoro/kokoro-v1.0.onnx"
+kokoro_voices_file="models/kokoro/voices-v1.0.bin"
 failures=0
 temp_files=()
 
@@ -108,8 +108,9 @@ check_voices_json() {
   local body_path=$2
   local check=$3
   local require_available=$4
+  local expected_default_id=$5
 
-  if python3 - "$body_path" "$check" "$require_available" <<'PY'
+  if python3 - "$body_path" "$check" "$require_available" "$expected_default_id" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -117,17 +118,18 @@ import sys
 body_path = Path(sys.argv[1])
 check = sys.argv[2]
 require_available = sys.argv[3] == "true"
+expected_default_id = sys.argv[4]
 
 payload = json.loads(body_path.read_text(encoding="utf-8"))
 voices = payload.get("voices")
 
 if check == "default_voice_id":
-    ok = payload.get("default_voice_id") == "ryan-medium"
+    ok = payload.get("default_voice_id") == expected_default_id
 elif check == "has_voice":
     ok = isinstance(voices, list) and len(voices) >= 1
 elif check == "has_default":
     ok = isinstance(voices, list) and any(
-        isinstance(voice, dict) and voice.get("id") == "ryan-medium"
+        isinstance(voice, dict) and voice.get("id") == expected_default_id
         for voice in voices
     )
 elif check == "default_available":
@@ -135,7 +137,7 @@ elif check == "default_available":
         (
             voice
             for voice in voices or []
-            if isinstance(voice, dict) and voice.get("id") == "ryan-medium"
+            if isinstance(voice, dict) and voice.get("id") == expected_default_id
         ),
         None,
     )
@@ -219,17 +221,15 @@ voice_status=$(curl_request GET "$backend_url/tts/voices" "$voice_headers" "$voi
 check_status "/tts/voices HTTP 200" "$voice_status" "200"
 
 if [[ "$voice_status" == "200" ]]; then
-  model_path="$repo_root/backend/models/piper/$default_voice_model_file"
-  config_path="$repo_root/backend/models/piper/$default_voice_config_file"
   require_default_available=false
-  if [[ -f "$model_path" && -f "$config_path" ]]; then
+  if [[ -f "$repo_root/backend/$kokoro_model_file" && -f "$repo_root/backend/$kokoro_voices_file" ]]; then
     require_default_available=true
   fi
 
-  check_voices_json "/tts/voices default $default_voice_id" "$voice_body" "default_voice_id" false
-  check_voices_json "/tts/voices has voices" "$voice_body" "has_voice" false
-  check_voices_json "/tts/voices includes $default_voice_id" "$voice_body" "has_default" false
-  check_voices_json "/tts/voices $default_voice_id available when local files exist" "$voice_body" "default_available" "$require_default_available"
+  check_voices_json "/tts/voices default $default_voice_id" "$voice_body" "default_voice_id" false "$default_voice_id"
+  check_voices_json "/tts/voices has voices" "$voice_body" "has_voice" false "$default_voice_id"
+  check_voices_json "/tts/voices includes $default_voice_id" "$voice_body" "has_default" false "$default_voice_id"
+  check_voices_json "/tts/voices $default_voice_id available when kokoro model files exist" "$voice_body" "default_available" "$require_default_available" "$default_voice_id"
 else
   fail "/tts/voices response body"
 fi
