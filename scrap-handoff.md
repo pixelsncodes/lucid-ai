@@ -49,8 +49,33 @@ Root causes were in FTS5 query construction (filler-word stopwords), plural/suff
 3. **Regression tests**: live-condition tests added in `backend/test_retrieval_regression.py` (27 tests) covering all three original repro cases plus related variants. Previously there were no live-KB regression tests.
 4. Earlier fixes from the enwiki FTS pipeline pass: conversational-verb stopwords, e-ending plural variant, tail-term fallback search (13 regression tests from that session are included in the 27).
 
+### Reranker session — cross-encoder reranking + retrieval diagnostics
+
+**Cross-encoder reranker** (`backend/reranker.py`): ms-marco-MiniLM-L-6-v2 (ONNX, fully offline). Model vendored at `backend/models/reranker/` (5 files: model.onnx ~91 MB, tokenizer.json, tokenizer_config.json, special_tokens_map.json, config.json). No torch required at runtime — uses `onnxruntime` + `tokenizers` already in the venv. Lazy-loaded on first query.
+
+**Placement** (`backend/wiki_store.py → search_index`): After the FTS5 adjusted-score sort, candidates are split into:
+- **Pinned** chunk-0: identity queries with entity_boost ≥ 2 → stays at position 0 unconditionally.
+- **Entity-anchored** (entity_boost ≥ 1): articles with at least one query-term redirect match — kept in their FTS5-adjusted order to preserve entity disambiguation. Critically, this prevents the cross-encoder from promoting a topically-adjacent article (e.g. "Alfred Einstein") above the entity-targeted one ("Albert Einstein") when the user says "Einstein" and the redirect maps "einstein" → albert-einstein.
+- **Rerank pool** (entity_boost = 0): freely reranked by cross-encoder. These are generic candidates with no entity signal, where semantic reranking adds value.
+
+**Latency**: batched ONNX inference, ~28ms for top-20 candidates on CPU. Well under the 500ms budget.
+
+**Config constants** (in `backend/config.py`):
+- `RERANKER_ENABLED = True` — set False to bypass without a revert.
+- `RERANK_TOP_N = 20` — number of rerank-pool candidates passed to the cross-encoder.
+
+**Feature flag**: `RERANKER_ENABLED` in `config.py`, imported as a name in `wiki_store.py`. To disable at runtime: set `ws.RERANKER_ENABLED = False` via monkeypatch (see `test_reranker.py`) or edit config.py and restart.
+
+**Diagnostics endpoint**: `GET /debug/retrieval?q=...&kb=enwiki` (read-only, no LLM call). Returns: query, terms (post-stopword), candidates list (article, chunk_index, chunk_id, fts5_score, reranker_score), chunk0_injected, threshold_passed, final_outcome (retrieved/unknown/fiction-guard). Not wired into chat UI.
+
+**New tests** (`backend/test_reranker.py`, 4 tests):
+1. Reranker reorders semantically — Paris capital chunk rises above generic France text for "What is the capital of France?"
+2. Chunk-0 pin survives reranking — identity query "Who is Michael Jackson?" keeps michael-jackson:0 at position 0 even when the cross-encoder prefers michael-jackson:1.
+3. RERANKER_ENABLED=False bypass — monkeypatching disables the pass; all debug candidates have reranker_score=None.
+4. `/debug/retrieval` endpoint shape — verifies all required JSON keys are present.
+
 ## Test suites — must stay green
-**~128 pytest** (8 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 27, `test_stt_vad_filter` 1; parameterized expansion accounts for the balance) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
+**119 pytest** (9 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 27, `test_stt_vad_filter` 1, `test_reranker` 4) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
 
 Note: smoke tests emit fiction-guard probes (e.g. "What is the capital of Atlantis?") into the uvicorn log — that's expected test traffic.
 
@@ -71,18 +96,42 @@ Standalone sandbox at `/arcade` route. Not yet wired into the main SCRAP chat UI
 
 ## Roadmap (priority order)
 
-1. **Cross-encoder reranker + retrieval diagnostics table** — a lightweight cross-encoder pass over the top-N FTS5 hits before the confidence threshold check; add a debug/diagnostics table (query → terms → candidate scores → final result) to make future regressions easier to diagnose.
-3. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, etc.) to SCRAP's personality responses.
-4. **Backlog**:
-   - WW2 vocabulary gap: "France's leader WW2" and similar era-specific queries still miss due to sparse enwiki coverage on some WW2-era article titles — investigate chunk coverage vs. redirect tables.
+1. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, etc.) to SCRAP's personality responses.
+2. **Backlog**:
+   - WW2 vocabulary gap — see diagnosis below. Fix path identified; not yet implemented.
    - Chunk-1 ranking: chunk-0 injection helps identity queries, but second-chunk answers (e.g. biographical details in the second paragraph) can still rank poorly — may need a soft positional prior.
    - PDF document mode: load a user-supplied PDF as a session-scoped knowledge base (in addition to or instead of the always-on wiki KBs).
+
+## WW2 gap diagnosis (stretch, June 12)
+
+Investigated via `/debug/retrieval` for "France leader WW2" and variants.
+
+**Root cause: FTS5 vocabulary mismatch — "ww2" not in the enwiki index.**
+
+Wikipedia uses "World War II" (spelled out), not "ww2". The FTS5 token "ww2" matches almost nothing in the 33M-chunk enwiki index. The top FTS5 hits for "france leader ww2" are completely irrelevant articles (e.g. "Atme", a Syrian village) that happen to co-occur the individual terms.
+
+**Detailed trace** for "France leader WW2" (terms: ['france', 'leader', 'ww2']):
+- 'ww2' → no redirect, no article with "ww2" in title → effectively a dead query term
+- Remaining 2-term AND query ('france' AND 'leader') returns articles like "Liberation of France" chunk 12 (reranker=0.14), "Congress of Vienna" chunk 1 (reranker=0.07) — all scored low by the cross-encoder, none answers the question
+- Final outcome: retrieved (3 chunks pass the filter) but LLM sees no useful context → returns "unknown"
+
+**What works:**
+- "de gaulle france WW2" → terms include 'de gaulle' → entity match → Charles de Gaulle article surfaces correctly
+- "who was the leader of france during world war 2" → terms include 'world', 'war' → "France during World War II" article retrieved (reranker=0.998)
+- "vichy france leader" → Vichy France article retrieved
+
+**Fix path (not yet implemented):**
+1. **Query expansion in `query_terms` or `fts_term_variants`**: map "ww2" / "wwii" → ["world war ii", "world war 2", "wwii"] OR add as synonym to fts_term_variants. This is the smallest targeted fix.
+2. Alternatively, add era-specific synonym pairs to a lookup dict in `wiki_store.py` (e.g. `{"ww2": "world war", "wwii": "world war", "ww1": "world war"}`).
+3. The "who was France's leader" ambiguity (De Gaulle = Free France; Pétain = Vichy) is a separate problem that would require the LLM to disambiguate from context — not a retrieval fix.
+
+**Scope note:** "France's leader WW2" is the symptom; the root is that any abbreviation-vs-spelled-out mismatch will fail similarly (e.g. "USA president" vs "United States president" would have a similar gap if articles only used one form).
 
 ## Hard constraints
 - The **fiction guard** must survive all retrieval changes: "Atlantis capital" must still return "unknown" for the fictional/DC-ambiguous case. The guard logic is in `main.py`; the 14 tests in `test_fiction_guard.py` are the regression suite.
 - The exact **"unknown" string behavior** (KB mode returns a specific string, not a generic LLM reply) must be preserved.
 - `article_meta` / `article_redirects` tables must remain the source of truth for entity resolution.
-- All ~127 pytest + 23 wiki smoke + 17 TTS smoke tests must stay green after any change.
+- All 119 pytest + 23 wiki smoke + 17 TTS smoke tests must stay green after any change.
 - KB-mode replies must stay factual — no emotion tag, no joke injection.
 
 ## Misc environment notes (carried forward)

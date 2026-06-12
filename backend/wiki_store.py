@@ -4,6 +4,9 @@ import re
 import sqlite3
 from pathlib import Path
 
+from config import RERANK_TOP_N, RERANKER_ENABLED
+from reranker import rerank as _rerank
+
 BASE_DIR = Path(__file__).parent
 WIKIPEDIA_DIR = BASE_DIR / "data" / "wikipedia"
 DEFAULT_ARTICLES_PATH = WIKIPEDIA_DIR / "articles.json"
@@ -545,7 +548,12 @@ def run_fts_search(conn: sqlite3.Connection, fts_query: str, search_limit: int) 
     ).fetchall()
 
 
-def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PATH) -> list[dict[str, str]]:
+def search_index(
+    query: str,
+    limit: int = 3,
+    index_path: Path = DEFAULT_INDEX_PATH,
+    _debug_info: "dict | None" = None,
+) -> list[dict[str, str]]:
     query = query.strip()
     terms = query_terms(query)
     query_term_set = set(terms)
@@ -555,6 +563,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
     if not terms or not index_path.exists():
         return []
 
+    _chunk0_injected = False
     filtered_rows: list[sqlite3.Row] = []
     filtered_tail_rows: list[sqlite3.Row] = []
     has_meta = False
@@ -671,6 +680,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
                             if _row0:
                                 seen_chunk_ids.add(_chunk0_id)
                                 merged_rows.append(_row0)
+                                _chunk0_injected = True
 
             filtered_rows = [
                 row for row in merged_rows
@@ -737,6 +747,58 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
             )
         results.sort(key=lambda r: r["_adjusted_score"])
 
+        # Cross-encoder reranker pass: reorder the top-RERANK_TOP_N FTS5
+        # candidates.  Two exemption rules preserve entity disambiguation:
+        #
+        # 1. Pinned chunk-0 (identity queries, entity_boost ≥ 2, chunk_index=0)
+        #    stays fixed at position 0 regardless of reranker score.
+        #
+        # 2. Any candidate belonging to an article with entity_boost ≥ 2 is
+        #    treated as "entity-anchored": it keeps its adjusted_score rank
+        #    relative to other entity-anchored chunks and is never displaced by
+        #    a lower-boost article's chunk.  This stops the cross-encoder from
+        #    promoting a superficially similar but wrong article (e.g.
+        #    "Alfred Einstein" above "Albert Einstein") when the entity-boost
+        #    system has already identified the correct target.
+        #
+        # The reranker freely reorders candidates with entity_boost < 2 (the
+        # general case where entity disambiguation adds no strong prior).
+        if RERANKER_ENABLED and len(results) > 1:
+            pinned = None
+            entity_anchored: list[dict] = []
+            rerank_pool_raw: list[dict] = []
+
+            for r in results:
+                boost = entity_boost_map.get(r["id"], 0)
+                if (
+                    pinned is None
+                    and identity_q
+                    and r["_chunk_index"] == 0
+                    and boost >= 2
+                ):
+                    pinned = r
+                elif boost >= 1:
+                    # Articles matching even a single query term via redirect are
+                    # entity-anchored: keep their adjusted_score order rather than
+                    # letting the cross-encoder demote them behind a zero-boost article
+                    # (e.g. Alfred Einstein must not rank above Albert Einstein when the
+                    # query says "Einstein" and the redirect maps "einstein" → albert-einstein).
+                    entity_anchored.append(r)
+                else:
+                    rerank_pool_raw.append(r)
+
+            pool = rerank_pool_raw[:RERANK_TOP_N]
+            overflow = rerank_pool_raw[RERANK_TOP_N:]
+
+            pool = _rerank(query, pool)
+
+            results = (
+                ([pinned] if pinned is not None else [])
+                + entity_anchored
+                + pool
+                + overflow
+            )
+
         # Guarantee one output slot for the best tail-search result not already
         # present in the top (limit-1) main results. This prevents a
         # popularity-dominated article (e.g. dc-comics) from filling every slot
@@ -779,6 +841,21 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
                 result["score"],
             )
         )
+
+    if _debug_info is not None:
+        _debug_info["terms"] = list(terms)
+        _debug_info["chunk0_injected"] = _chunk0_injected
+        _debug_info["candidates"] = [
+            {
+                "article": r["title"],
+                "chunk_index": r.get("_chunk_index"),
+                "chunk_id": r["chunk_id"],
+                "fts5_score": round(float(r["score"]), 4),
+                "reranker_score": r.get("reranker_score"),
+            }
+            for r in results
+        ]
+
     return [
         {
             "id": result["id"],

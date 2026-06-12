@@ -1669,6 +1669,51 @@ def get_knowledge_bases():
     return KNOWLEDGE_BASES
 
 
+@app.get("/debug/retrieval")
+def debug_retrieval(
+    q: str = Query(..., min_length=1),
+    kb: str = Query("enwiki"),
+):
+    """Diagnostics endpoint: retrieval pipeline trace for a single query.
+
+    Returns FTS5 terms, every candidate with its FTS5 and reranker scores,
+    chunk-0 injection status, and the final outcome.  Read-only — no LLM call.
+    """
+    query = q.strip()
+    index_path = get_wiki_index_path(kb)
+
+    debug_info: dict = {}
+    results = search_index(query, limit=3, index_path=index_path, _debug_info=debug_info)
+
+    threshold_passed = len(results) > 0
+
+    fiction_guard_fired = False
+    if threshold_passed and not question_is_fiction_scoped(query):
+        slugs = [e.get("id", "") for e in results]
+        meta = get_article_meta(slugs, index_path)
+        filtered = apply_fiction_filter(results, meta)
+        if not filtered:
+            fiction_guard_fired = True
+            threshold_passed = False
+
+    if fiction_guard_fired:
+        final_outcome = "fiction-guard"
+    elif threshold_passed:
+        final_outcome = "retrieved"
+    else:
+        final_outcome = "unknown"
+
+    return {
+        "query": query,
+        "kb": kb,
+        "terms": debug_info.get("terms", []),
+        "candidates": debug_info.get("candidates", []),
+        "chunk0_injected": debug_info.get("chunk0_injected", False),
+        "threshold_passed": threshold_passed,
+        "final_outcome": final_outcome,
+    }
+
+
 @app.get("/tts/voices")
 def get_tts_voices():
     return public_voice_payload(BASE_DIR)

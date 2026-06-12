@@ -36,6 +36,9 @@ TTS_MAX_TEXT_LENGTH = 2000
 # at 22050 Hz (multiples of 0.1 are safe).
 TTS_SENTENCE_SILENCE_SECONDS = 0.4
 
+RERANKER_ENABLED = True   # set False to bypass cross-encoder reranking without a revert
+RERANK_TOP_N = 20         # number of FTS5 candidates passed to the reranker
+
 SYSTEM_PROMPT = (
     "You are SCRAP — Salvaged Conversational Retro-Apocalyptic Processor. "
     "Rebuilt from salvage. Offline. Unimpressed.\n"
