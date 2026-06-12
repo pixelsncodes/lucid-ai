@@ -1,0 +1,141 @@
+/* ── Arcade dev sandbox ──────────────────────────────────────────────────── */
+
+.arcade-sandbox {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 16px 32px;
+  gap: 24px;
+  color: var(--t1);
+  background: var(--bg);
+}
+
+.arcade-sandbox::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(circle, #26262e 1px, transparent 1px);
+  background-size: 22px 22px;
+  opacity: 0.28;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.arcade-sandbox > * { position: relative; z-index: 1; }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.sandbox-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.sandbox-header h1 {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t2);
+  margin: 0;
+}
+
+.sandbox-header .game-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--t3);
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+
+.sandbox-body {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ── Arena ─────────────────────────────────────────────────────────────── */
+
+.sandbox-arena {
+  border: 1px solid var(--b1);
+  border-radius: 8px;
+  background: var(--s1);
+  padding: 16px;
+  cursor: none;   /* hide cursor inside game area */
+  touch-action: none;
+}
+
+/* ── Event log ──────────────────────────────────────────────────────────── */
+
+.sandbox-events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 220px;
+  min-width: 180px;
+}
+
+.sandbox-events h2 {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--t3);
+  margin: 0 0 4px;
+}
+
+.event-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: var(--s2);
+  border-left: 2px solid var(--b2);
+  animation: event-in 150ms ease-out;
+}
+
+.event-entry:first-child {
+  border-left-color: var(--t1);
+}
+
+@keyframes event-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.event-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--t1);
+}
+
+.event-data {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--t3);
+  word-break: break-all;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+
+.sandbox-footer {
+  font-size: 11px;
+  color: var(--t3);
+  font-family: var(--font-mono);
+  text-align: center;
+  line-height: 1.7;
+}
+
+.sandbox-footer kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid var(--b2);
+  border-radius: 3px;
+  color: var(--t2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}

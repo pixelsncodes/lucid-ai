@@ -27,6 +27,7 @@ function MatrixStage({
   lastInteraction = 0,
   onPress,
   pressLabel = 'Start voice conversation',
+  subtitleWindow = null, // { prev, current, next } | null
 }) {
   const [bootPhase, setBootPhase] = useState(() =>
     window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'live' : 'boot-h',
@@ -153,6 +154,17 @@ function MatrixStage({
     display = <DotMatrix mode="pattern" value="diamond" anim="ripple" cycleMs={1150} />
   } else if (status === 'speaking') {
     display = <DotMatrix mode="speak" value={face} />
+    if (subtitleWindow) {
+      statusText = (
+        <span className="matrix-subtitle">
+          <span className="subtitle-prev">{subtitleWindow.prev ?? ' '}</span>
+          {' '}
+          <span className="subtitle-cur">{subtitleWindow.current}</span>
+          {' '}
+          <span className="subtitle-next">{subtitleWindow.next ?? ' '}</span>
+        </span>
+      )
+    }
   } else if (asleep) {
     display = <DotMatrix mode="glyph" value="Z" anim="breathe" />
     statusText = 'zzz'

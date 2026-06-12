@@ -169,6 +169,27 @@
   letter-spacing: 0.04em;
   color: var(--t3);
   text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.matrix-subtitle {
+  display: inline-flex;
+  gap: 0.35em;
+  align-items: baseline;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.subtitle-prev,
+.subtitle-next {
+  opacity: 0.3;
+  min-width: 1ch;
+}
+
+.subtitle-cur {
+  font-weight: 650;
+  opacity: 1;
 }
 
 .end-conversation {

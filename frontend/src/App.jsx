@@ -35,6 +35,31 @@ const clampFiniteNumber = (value, min, max, fallback) => {
 const clampContextSize = (value) =>
   Math.round(clampFiniteNumber(value, MIN_NUM_CTX, MAX_NUM_CTX, DEFAULT_NUM_CTX))
 
+const SUBTITLE_WORD_BASE = 3
+
+function buildWordTimings(text, duration) {
+  if (!isFinite(duration) || duration <= 0) return null
+  const words = text.split(/\s+/).filter(Boolean)
+  if (!words.length) return null
+  const totalUnits = words.reduce((sum, w) => sum + w.length + SUBTITLE_WORD_BASE, 0)
+  let cumulative = 0
+  const starts = words.map((w) => {
+    const t = (cumulative / totalUnits) * duration
+    cumulative += w.length + SUBTITLE_WORD_BASE
+    return t
+  })
+  return { words, starts }
+}
+
+function subtitleIndexAt(starts, currentTime) {
+  let idx = 0
+  for (let i = 1; i < starts.length; i++) {
+    if (currentTime >= starts[i]) idx = i
+    else break
+  }
+  return idx
+}
+
 function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
   const [message, setMessage] = useState('')
@@ -58,6 +83,7 @@ function App() {
   const [autoSendVoice, setAutoSendVoice] = useState(true)
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState(null)
   const [speechStatus, setSpeechStatus] = useState(null)
+  const [subtitleWindow, setSubtitleWindow] = useState(null)
   const [uiMode, setUiMode] = useState('voice') // 'voice' | 'chat'
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [conversationActive, setConversationActive] = useState(false)
@@ -528,6 +554,7 @@ function App() {
     let audioUrl = ''
     let hasCleanedUp = false
     let playingTimeoutId = null
+    let cleanupSubtitles = null
     const cleanupSpeakMessage = ({ abortRequest = false, stopAudio = false } = {}) => {
       if (hasCleanedUp) {
         return
@@ -542,6 +569,12 @@ function App() {
       if (abortRequest) {
         controller.abort()
       }
+
+      if (cleanupSubtitles) {
+        cleanupSubtitles()
+        cleanupSubtitles = null
+      }
+      setSubtitleWindow(null)
 
       if (audio) {
         audio.removeEventListener('error', cleanupSpeakMessage)
@@ -600,6 +633,25 @@ function App() {
       const audioBlob = await response.blob()
       audioUrl = URL.createObjectURL(audioBlob)
       audio = new Audio(audioUrl)
+
+      // Rolling subtitle: weight words by char count, map currentTime → word index.
+      let timings = null
+      const handleSubtitleUpdate = () => {
+        if (!timings) return
+        const idx = subtitleIndexAt(timings.starts, audio.currentTime)
+        setSubtitleWindow({
+          prev: idx > 0 ? timings.words[idx - 1] : null,
+          current: timings.words[idx],
+          next: idx < timings.words.length - 1 ? timings.words[idx + 1] : null,
+        })
+      }
+      audio.addEventListener('loadedmetadata', () => {
+        timings = buildWordTimings(chatMessage.text, audio.duration)
+        if (timings) {
+          audio.addEventListener('timeupdate', handleSubtitleUpdate)
+          cleanupSubtitles = () => audio.removeEventListener('timeupdate', handleSubtitleUpdate)
+        }
+      }, { once: true })
 
       // Play the ba-dum-tss rimshot (explicit corpus jokes only).
       const playBaDumTss = () => {
@@ -873,6 +925,7 @@ function App() {
           lastInteraction={lastInteraction}
           onPress={handleMatrixPress}
           pressLabel={pressLabel}
+          subtitleWindow={subtitleWindow}
         />
         {conversationActive && status !== 'idle' ? (
           <button type="button" className="end-conversation" onClick={endConversation}>
