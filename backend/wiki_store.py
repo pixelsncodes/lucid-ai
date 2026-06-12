@@ -453,26 +453,53 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
     with connect(index_path) as conn:
         initialize_index(conn)
 
-        # Relaxation ladder: start with all terms ANDed. Retrieval queries put
-        # the topic first and intent terms last, so if a strict query matches
-        # nothing, drop trailing terms (down to a floor of 2) instead of
-        # returning zero rows. Returning the topic's chunks lets the grounded
-        # answer layer respond cautiously instead of falsely claiming the
-        # knowledgebase has nothing.
-        attempt_terms = list(terms)
-        while attempt_terms:
-            rows = run_fts_search(conn, build_fts_query_from_terms(attempt_terms), search_limit)
+        has_meta = _has_article_meta(conn)
+
+        if has_meta:
+            # Merged ladder: collect rows from ALL levels (full terms down to
+            # the floor of 2) so that topic-article chunks reach the re-ranker
+            # even when an intent term (e.g. "attend") doesn't co-occur with
+            # the topic term in the same chunk.  Cap the merged pool at 800
+            # raw rows to bound query cost; dedup by chunk id across levels.
+            # Relaxed levels use a wider per-level cap (3× with a 300-row
+            # floor) because popular topic articles often rank below the
+            # default 50-per-limit window in less discriminating 2-term
+            # queries (albert-einstein ranks 272nd for "university einstein").
+            relaxed_search_limit = min(800, max(search_limit * 3, 300))
+            seen_chunk_ids: set[str] = set()
+            merged_rows: list[sqlite3.Row] = []
+            attempt_terms = list(terms)
+            is_first_level = True
+            while attempt_terms:
+                level_limit = search_limit if is_first_level else relaxed_search_limit
+                for row in run_fts_search(conn, build_fts_query_from_terms(attempt_terms), level_limit):
+                    if row["id"] not in seen_chunk_ids:
+                        seen_chunk_ids.add(row["id"])
+                        merged_rows.append(row)
+                is_first_level = False
+                if len(merged_rows) >= 800 or len(attempt_terms) <= 2:
+                    break
+                attempt_terms = attempt_terms[:-1]
             filtered_rows = [
-                row
-                for row in rows
+                row for row in merged_rows
                 if title_matches_required_terms(row["title"], required_terms)
                 and is_useful_chunk(row["text"])
             ]
-            if filtered_rows or len(attempt_terms) <= 2:
-                break
-            attempt_terms = attempt_terms[:-1]
+        else:
+            # Original first-non-empty-wins ladder — SimpleWiki path unchanged.
+            attempt_terms = list(terms)
+            while attempt_terms:
+                rows = run_fts_search(conn, build_fts_query_from_terms(attempt_terms), search_limit)
+                filtered_rows = [
+                    row
+                    for row in rows
+                    if title_matches_required_terms(row["title"], required_terms)
+                    and is_useful_chunk(row["text"])
+                ]
+                if filtered_rows or len(attempt_terms) <= 2:
+                    break
+                attempt_terms = attempt_terms[:-1]
 
-        has_meta = _has_article_meta(conn)
         if has_meta and filtered_rows:
             distinct_slugs = list({row["article_id"] for row in filtered_rows})
             incoming_links_map = _load_incoming_links(conn, distinct_slugs)
