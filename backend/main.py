@@ -1746,6 +1746,7 @@ async def speech_to_text(audio: UploadFile = File(...)):
             temp_audio.name,
             language=STT_LANGUAGE,
             beam_size=5,
+            vad_filter=True,
         )
 
         text = " ".join(segment.text.strip() for segment in segments).strip()

@@ -19,6 +19,27 @@
 3. **Dad-joke corpus**: `backend/data/dad_jokes.json` (flat `{"setup", "punchline", "id"}` array; fully offline at runtime). Two joke paths: Path 1 (direct serve) for explicit triggers and idle — returns verbatim corpus joke, no LLM call, intro from `JOKE_INTROS` rotation in `config.py`. Path 2 (seeded injection) — `JOKE_RANDOM_PROBABILITY` (8%) per no-KB turn with cooldown (≥3 turns), both in `config.py`. Recently-served joke IDs tracked in-memory to avoid repeats.
 4. **Laugh audio**: re-enabled via pre-recorded SFX (`backend/static/sfx/`). `ha-ha.mp3` plays on `:D` (joke told); `ba-dum-tss.mp3` plays on corpus jokes. `sfx` field on joke responses carries the clip name. Voice mode reopens mic after `RESUME_LISTEN_DELAY_MS` (420ms, in `frontend/src/App.jsx`). Constants `LAUGH_AUDIO_ENABLED` and `LAUGH_TEXT` live in `frontend/src/identity.js`.
 5. **Audio/animation sync fix**: matrix speaking state driven by the audio element's `'playing'` event; ends on `'ended'`/`'error'`/`'pause'`, with a safety timeout to idle/`:/` if TTS never starts. Voice-mode listen handoff keyed on audio `'ended'`.
+6. **Rolling subtitles**: word-by-word subtitle window (`subtitleWindow`) driven by `audio.currentTime` + `buildWordTimings()` in App.jsx. Char-count-weighted timing estimate, three-word window (prev/current/next), rendered in `MatrixStage.jsx`.
+
+### VAD session — browser-side voice activity detection
+
+`@ricky0123/vad-web` (Silero VAD via onnxruntime-web) triggers end-of-speech in conversation mode. Tap-to-stop in draft mode is unchanged.
+
+**How it works**: `MicVAD.new()` is created non-blocking after each 'send' recording starts. It shares the existing `getUserMedia` stream via `getStream: async () => stream` (one mic capture; VAD owns a separate AudioContext). `onSpeechEnd` → `recorder.stop()` → existing blob → transcribe → auto-send, untouched. `onSpeechStart` clears the no-speech safety timer. `destroyVad()` is called in `recorder.onstop`, the getUserMedia error path, and unmount — VAD can never outlive the recording.
+
+**Constants in `frontend/src/App.jsx`** (next to `RESUME_LISTEN_DELAY_MS`):
+- `VAD_SILENCE_MS = 800` — maps to `redemptionMs` (ms of silence after speech end before `onSpeechEnd` fires)
+- `VAD_SPEECH_THRESHOLD = 0.3` — `positiveSpeechThreshold`; library default
+- `VAD_NO_SPEECH_TIMEOUT_MS = 10000` — if no `onSpeechStart` within 10 s, recorder stops on the discard path; conversation exits silently
+
+**Offline assets** at `frontend/public/vad/` (survives clean installs via `postinstall` in `package.json`):
+- `vad.worklet.bundle.min.js` — AudioWorklet bundle
+- `silero_vad_legacy.onnx` — Silero VAD model
+- `ort-wasm-simd-threaded.wasm` + `ort-wasm-simd-threaded.asyncify.wasm` — ONNX runtime WASM
+
+`baseAssetPath` and `onnxWASMBasePath` both point to `/vad/`. No CDN required at runtime.
+
+**Backend**: `vad_filter=True` on `model.transcribe()` in `/stt` endpoint strips leading/trailing non-speech from recordings (which now include silence before speech starts).
 
 ### Retrieval session — all three repro cases FIXED
 Root causes were in FTS5 query construction (filler-word stopwords), plural/suffix handling, and score threshold behavior on short chunks. Fixes are unconditional (no feature flags).
@@ -29,7 +50,7 @@ Root causes were in FTS5 query construction (filler-word stopwords), plural/suff
 4. Earlier fixes from the enwiki FTS pipeline pass: conversational-verb stopwords, e-ending plural variant, tail-term fallback search (13 regression tests from that session are included in the 27).
 
 ## Test suites — must stay green
-**~127 pytest** (7 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 27; parameterized expansion accounts for the balance) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
+**~128 pytest** (8 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 27, `test_stt_vad_filter` 1; parameterized expansion accounts for the balance) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
 
 Note: smoke tests emit fiction-guard probes (e.g. "What is the capital of Atlantis?") into the uvicorn log — that's expected test traffic.
 
@@ -50,8 +71,7 @@ Standalone sandbox at `/arcade` route. Not yet wired into the main SCRAP chat UI
 
 ## Roadmap (priority order)
 
-1. **VAD session** — voice activity detection, browser-side. Silero VAD (ONNX in the browser) for endpointing: detect end-of-speech instead of relying on a fixed silence timeout. Reduces latency and false chops on slow speakers.
-2. **Cross-encoder reranker + retrieval diagnostics table** — a lightweight cross-encoder pass over the top-N FTS5 hits before the confidence threshold check; add a debug/diagnostics table (query → terms → candidate scores → final result) to make future regressions easier to diagnose.
+1. **Cross-encoder reranker + retrieval diagnostics table** — a lightweight cross-encoder pass over the top-N FTS5 hits before the confidence threshold check; add a debug/diagnostics table (query → terms → candidate scores → final result) to make future regressions easier to diagnose.
 3. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, etc.) to SCRAP's personality responses.
 4. **Backlog**:
    - WW2 vocabulary gap: "France's leader WW2" and similar era-specific queries still miss due to sparse enwiki coverage on some WW2-era article titles — investigate chunk coverage vs. redirect tables.

@@ -7,11 +7,13 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "postinstall": "mkdir -p public/vad && cp node_modules/@ricky0123/vad-web/dist/vad.worklet.bundle.min.js public/vad/ && cp node_modules/@ricky0123/vad-web/dist/silero_vad_legacy.onnx public/vad/ && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm public/vad/ && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm public/vad/"
   },
   "dependencies": {
     "@fontsource/fira-code": "^5.2.7",
     "@fontsource/inter": "^5.2.8",
+    "@ricky0123/vad-web": "^0.0.30",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
