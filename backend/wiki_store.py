@@ -15,6 +15,12 @@ WIKIPEDIA_FULL_INDEX_PATH = WIKIPEDIA_FULL_DIR / "wikipedia-full.sqlite3"
 W_POP = 2.0
 W_TITLE = 8.0
 W_ENTITY = 12.0
+# Bonus subtracted from adjusted_score for chunk_index=0 on identity queries.
+# Gate: is_identity_query AND chunk_index == 0 AND entity_boost >= 2.
+# Derived from the observed 12.7-point BM25 gap between intro and mid-article
+# chunks on "Who is Michael Jackson?" — 15.0 guarantees the intro ranks first
+# without overriding topic-specific queries where mid-article chunks are better.
+CHUNK_INTRO_BONUS = 15.0
 
 FTS_STOP_WORDS = {
     "a",
@@ -275,6 +281,20 @@ def build_fts_query(query: str) -> str:
     return build_fts_query_from_terms(terms)
 
 
+def build_hybrid_fts_query(anchor_terms: list[str], intent_terms: list[str]) -> str:
+    """Build anchor AND (intent1 OR intent2 OR ...) FTS5 query.
+
+    Anchor terms are all required (AND). Intent terms are OR'd with their
+    variants — any one match is sufficient. This fires regardless of where
+    the anchor appears in the original query (head, tail, or middle).
+    """
+    anchor_part = build_fts_query_from_terms(anchor_terms)
+    intent_variants: list[str] = []
+    for term in intent_terms:
+        intent_variants.extend(fts_term_variants(term))
+    return f"{anchor_part} AND ({' OR '.join(intent_variants)})"
+
+
 def query_terms(query: str) -> list[str]:
     terms = re.findall(r"[a-zA-Z0-9]+", query.lower())
     normalized_terms = []
@@ -376,6 +396,50 @@ def _title_covered(title: str, query_term_set: set[str]) -> bool:
     # Require ≥2 title terms so single-word tokens left after stripping non-ASCII
     # (e.g. "Météo" → nothing, leaving only "france") don't accidentally match.
     return len(title_terms) >= 2 and title_terms <= query_term_set
+
+
+def is_identity_query(terms: list[str], entity_boost_map: dict[str, int]) -> bool:
+    """True when all query terms form a single ≥2-term entity anchor.
+
+    Guards CHUNK_INTRO_BONUS: pure identity questions ('Who is Michael Jackson?')
+    should surface the intro chunk; topic-specific questions ('Michael Jackson
+    albums') should not.
+    """
+    if len(terms) < 2:
+        return False
+    return any(boost == len(terms) for boost in entity_boost_map.values())
+
+
+def _find_best_anchor(
+    conn: sqlite3.Connection,
+    terms: list[str],
+    entity_boost_map: dict[str, int],
+) -> tuple[list[str], int] | None:
+    """Return (anchor_terms, anchor_start) for the best ≥2-term entity anchor.
+
+    Scans article_redirects for the ngram of size best_boost that maps to the
+    top-boosted slug. Returns None when best boost < 2.
+    """
+    best_count = max(entity_boost_map.values(), default=0)
+    if best_count < 2:
+        return None
+    best_slug = next(s for s, v in entity_boost_map.items() if v == best_count)
+    candidates = [
+        (" ".join(terms[i : i + best_count]), i)
+        for i in range(len(terms) - best_count + 1)
+    ]
+    phrases = [p for p, _ in candidates]
+    placeholders = ",".join("?" * len(phrases))
+    rows = conn.execute(
+        f"SELECT name_norm FROM article_redirects"
+        f" WHERE name_norm IN ({placeholders}) AND slug = ?",
+        phrases + [best_slug],
+    ).fetchall()
+    matched = {row["name_norm"] for row in rows}
+    for phrase, i in candidates:
+        if phrase in matched:
+            return terms[i : i + best_count], i
+    return None
 
 
 def connect(index_path: Path = DEFAULT_INDEX_PATH) -> sqlite3.Connection:
@@ -503,6 +567,44 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
         has_meta = _has_article_meta(conn)
 
         if has_meta:
+            relaxed_search_limit = min(800, max(search_limit * 3, 300))
+            seen_chunk_ids: set[str] = set()
+            merged_rows: list[sqlite3.Row] = []
+
+            # Pre-compute entity anchor and intent terms for the hybrid query.
+            # Anchor terms: the ≥2-word entity match (required in hybrid).
+            # Intent terms: all other query terms OR'd in hybrid (any match
+            # suffices). Split by identity — NOT position — so the hybrid
+            # works whether the entity appears at query head or tail (e.g.
+            # after follow-up resolution appends it).
+            hybrid_anchor: list[str] | None = None
+            hybrid_intent: list[str] | None = None
+            if _has_article_redirects(conn) and terms:
+                entity_boost_map = _load_entity_boosts(conn, _build_alias_ngrams(terms))
+                anchor = _find_best_anchor(conn, terms, entity_boost_map)
+                if anchor is not None:
+                    anchor_tms, _ = anchor
+                    anchor_set = set(anchor_tms)
+                    intent = [t for t in terms if t not in anchor_set]
+                    if intent:
+                        hybrid_anchor = anchor_tms
+                        hybrid_intent = intent
+
+            # Hybrid: anchor AND (intent OR intent...). Fires unconditionally
+            # when intent_terms is non-empty — correct for Cases B and C
+            # where the main AND ladder's first level returns plausible-but-
+            # wrong hits (not empty rows), so the old first_level_empty gate
+            # never triggered.
+            if hybrid_anchor and hybrid_intent:
+                for row in run_fts_search(
+                    conn,
+                    build_hybrid_fts_query(hybrid_anchor, hybrid_intent),
+                    relaxed_search_limit,
+                ):
+                    if row["id"] not in seen_chunk_ids:
+                        seen_chunk_ids.add(row["id"])
+                        merged_rows.append(row)
+
             # Merged ladder: collect rows from ALL levels (full terms down to
             # the floor of 2) so that topic-article chunks reach the re-ranker
             # even when an intent term (e.g. "attend") doesn't co-occur with
@@ -512,9 +614,6 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
             # floor) because popular topic articles often rank below the
             # default 50-per-limit window in less discriminating 2-term
             # queries (albert-einstein ranks 272nd for "university einstein").
-            relaxed_search_limit = min(800, max(search_limit * 3, 300))
-            seen_chunk_ids: set[str] = set()
-            merged_rows: list[sqlite3.Row] = []
             attempt_terms = list(terms)
             is_first_level = True
             first_level_empty = False
@@ -544,6 +643,34 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
                 ):
                     if row["id"] not in seen_chunk_ids:
                         tail_rows.append(row)
+
+            # Chunk 0 injection: for identity queries the intro chunk often
+            # falls outside the FTS pool (ranked > search_limit because
+            # mid-article chunks have denser entity-term repetition). Fetch
+            # it directly so CHUNK_INTRO_BONUS can act on it.
+            if is_identity_query(terms, entity_boost_map):
+                _best_boost = max(entity_boost_map.values(), default=0)
+                if _best_boost >= 2:
+                    _best_slug = next(
+                        (s for s, v in entity_boost_map.items() if v == _best_boost), None
+                    )
+                    if _best_slug:
+                        _chunk0_id = f"{_best_slug}:0"
+                        if _chunk0_id not in seen_chunk_ids:
+                            _row0 = conn.execute(
+                                """
+                                SELECT chunks.id, chunks.article_id, chunks.title,
+                                       chunks.text, chunks.chunk_index,
+                                       bm25(chunks_fts, 5.0, 1.0) AS score
+                                FROM chunks_fts
+                                JOIN chunks ON chunks_fts.rowid = chunks.rowid
+                                WHERE chunks_fts MATCH ? AND chunks.id = ?
+                                """,
+                                (build_fts_query_from_terms(terms), _chunk0_id),
+                            ).fetchone()
+                            if _row0:
+                                seen_chunk_ids.add(_chunk0_id)
+                                merged_rows.append(_row0)
 
             filtered_rows = [
                 row for row in merged_rows
@@ -575,8 +702,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
                 {row["article_id"] for row in filtered_rows + filtered_tail_rows}
             )
             incoming_links_map = _load_incoming_links(conn, distinct_slugs)
-            if _has_article_redirects(conn) and terms:
-                entity_boost_map = _load_entity_boosts(conn, _build_alias_ngrams(terms))
+            # entity_boost_map pre-computed above (empty when no redirects table)
 
     results = [
         {
@@ -592,14 +718,22 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
     ]
 
     if has_meta:
+        identity_q = is_identity_query(terms, entity_boost_map)
         for result in results:
             links = incoming_links_map.get(result["id"], 0)
             covered = _title_covered(result["title"], query_term_set)
+            entity_boost = entity_boost_map.get(result["id"], 0)
+            intro_bonus = (
+                CHUNK_INTRO_BONUS
+                if identity_q and result["_chunk_index"] == 0 and entity_boost >= 2
+                else 0.0
+            )
             result["_adjusted_score"] = (
                 result["score"]
                 - W_POP * math.log1p(links)
                 - (W_TITLE if covered else 0.0)
-                - W_ENTITY * entity_boost_map.get(result["id"], 0)
+                - W_ENTITY * entity_boost
+                - intro_bonus
             )
         results.sort(key=lambda r: r["_adjusted_score"])
 
