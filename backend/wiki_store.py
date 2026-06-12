@@ -85,6 +85,10 @@ FTS_STOP_WORDS = {
     "show",
     "give",
     "some",
+    "know",
+    "knows",
+    "think",
+    "thinks",
 }
 
 
@@ -241,7 +245,8 @@ def fts_term_variants(term: str) -> list[str]:
     else:
         if len(term) > 2 and term.endswith("y"):
             variants.append(f"{term[:-1]}ies")
-        variants.append(f"{term}s")
+        if not term.endswith("e"):
+            variants.append(f"{term}s")
 
     deduped = []
     for variant in variants:
@@ -487,6 +492,7 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
         return []
 
     filtered_rows: list[sqlite3.Row] = []
+    filtered_tail_rows: list[sqlite3.Row] = []
     has_meta = False
     incoming_links_map: dict[str, int] = {}
     entity_boost_map: dict[str, int] = {}
@@ -511,18 +517,41 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
             merged_rows: list[sqlite3.Row] = []
             attempt_terms = list(terms)
             is_first_level = True
+            first_level_empty = False
             while attempt_terms:
                 level_limit = search_limit if is_first_level else relaxed_search_limit
+                rows_before = len(merged_rows)
                 for row in run_fts_search(conn, build_fts_query_from_terms(attempt_terms), level_limit):
                     if row["id"] not in seen_chunk_ids:
                         seen_chunk_ids.add(row["id"])
                         merged_rows.append(row)
+                if is_first_level:
+                    first_level_empty = len(merged_rows) == rows_before
                 is_first_level = False
                 if len(merged_rows) >= 800 or len(attempt_terms) <= 2:
                     break
                 attempt_terms = attempt_terms[:-1]
+
+            # Tail search: when the full-term query found nothing, also try the
+            # last 2 terms. Queries like "DC Comics Atlantis capital" place the
+            # topic terms at the end; the normal ladder drops them first and
+            # never tries the specific "atlantis capital" combination that finds
+            # the right article directly.
+            tail_rows: list[sqlite3.Row] = []
+            if first_level_empty and len(terms) >= 3:
+                for row in run_fts_search(
+                    conn, build_fts_query_from_terms(terms[-2:]), relaxed_search_limit
+                ):
+                    if row["id"] not in seen_chunk_ids:
+                        tail_rows.append(row)
+
             filtered_rows = [
                 row for row in merged_rows
+                if title_matches_required_terms(row["title"], required_terms)
+                and is_useful_chunk(row["text"])
+            ]
+            filtered_tail_rows = [
+                row for row in tail_rows
                 if title_matches_required_terms(row["title"], required_terms)
                 and is_useful_chunk(row["text"])
             ]
@@ -541,8 +570,10 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
                     break
                 attempt_terms = attempt_terms[:-1]
 
-        if has_meta and filtered_rows:
-            distinct_slugs = list({row["article_id"] for row in filtered_rows})
+        if has_meta and (filtered_rows or filtered_tail_rows):
+            distinct_slugs = list(
+                {row["article_id"] for row in filtered_rows + filtered_tail_rows}
+            )
             incoming_links_map = _load_incoming_links(conn, distinct_slugs)
             if _has_article_redirects(conn) and terms:
                 entity_boost_map = _load_entity_boosts(conn, _build_alias_ngrams(terms))
@@ -571,6 +602,41 @@ def search_index(query: str, limit: int = 3, index_path: Path = DEFAULT_INDEX_PA
                 - W_ENTITY * entity_boost_map.get(result["id"], 0)
             )
         results.sort(key=lambda r: r["_adjusted_score"])
+
+        # Guarantee one output slot for the best tail-search result not already
+        # present in the top (limit-1) main results. This prevents a
+        # popularity-dominated article (e.g. dc-comics) from filling every slot
+        # when the full-term query failed and the topic article can only be
+        # found via the tail query (e.g. "atlantis capital").
+        if filtered_tail_rows:
+            tail_results = [
+                {
+                    "id": row["article_id"],
+                    "chunk_id": row["id"],
+                    "title": row["title"],
+                    "text": row["text"],
+                    "_chunk_index": row["chunk_index"],
+                    "score": row["score"],
+                    "_title_rank": title_rank(row["title"], query, terms),
+                }
+                for row in filtered_tail_rows
+            ]
+            # Sort tail candidates by raw BM25 (the tail query's own relevance
+            # signal), not adjusted_score. Adjusted scores are calibrated for the
+            # full-query context; W_TITLE in particular inflates articles whose
+            # title overlaps the full query (e.g. "Atlantis in comics" → covered)
+            # even when another article's chunk more directly answers the tail
+            # terms (atlantis-aquaman:12 "Poseidonis is the capital of Atlantis").
+            tail_results.sort(key=lambda r: r["score"])
+            # Dedup at chunk level so an article already represented by a
+            # different chunk in main results can still contribute a NEW chunk
+            # via the tail search (e.g. atlantis-aquaman:0 in main, :12 in tail).
+            main_chunk_ids = {r["chunk_id"] for r in results[:limit]}
+            for tr in tail_results:
+                if tr["chunk_id"] not in main_chunk_ids:
+                    results = results[: limit - 1] + [tr]
+                    break
+
     else:
         results.sort(
             key=lambda result: (
