@@ -1,0 +1,110 @@
+diff --git a/backend/tts_voices.py b/backend/tts_voices.py
+index 1ae5e63..b00fc04 100644
+--- a/backend/tts_voices.py
++++ b/backend/tts_voices.py
+@@ -2,12 +2,51 @@ import shutil
+ from pathlib import Path
+ 
+ 
+-TTS_DEFAULT_VOICE_ID = "scrap-standard"
++TTS_DEFAULT_VOICE_ID = "scrap-clear"
+ 
+ ESPEAK_BINARY = "espeak-ng"
++MBROLA_BINARY = "mbrola"
++MBROLA_DATA_DIR = Path("/usr/share/mbrola")
+ 
+ TTS_VOICES = [
+-    # ── eSpeak NG — formant synthesis, the authentic robot ──
++    # ── eSpeak NG + MBROLA — smooth diphone synthesis, clear but synthetic ──
++    {
++        "id": "scrap-clear",
++        "name": "SCRAP Clear (robotic)",
++        "engine": "espeak",
++        "language": "en-US",
++        "espeak_voice": "mb-us2",
++        "mbrola_data": "us2",
++        "speed": 150,
++        "pitch": 50,
++        "amplitude": 100,
++        "description": "Smooth MBROLA diphone voice. Clear, calm, synthetic. The default.",
++    },
++    {
++        "id": "scrap-clear-2",
++        "name": "SCRAP Clear II (robotic)",
++        "engine": "espeak",
++        "language": "en-US",
++        "espeak_voice": "mb-us3",
++        "mbrola_data": "us3",
++        "speed": 150,
++        "pitch": 50,
++        "amplitude": 100,
++        "description": "Alternate MBROLA male timbre.",
++    },
++    {
++        "id": "scrap-clear-f",
++        "name": "SCRAP Clear F (robotic)",
++        "engine": "espeak",
++        "language": "en-US",
++        "espeak_voice": "mb-us1",
++        "mbrola_data": "us1",
++        "speed": 150,
++        "pitch": 50,
++        "amplitude": 100,
++        "description": "MBROLA female timbre.",
++    },
++    # ── eSpeak NG — raw formant synthesis, the harsher retro robot ──
+     {
+         "id": "scrap-standard",
+         "name": "SCRAP Standard (robotic)",
+@@ -16,8 +55,8 @@ TTS_VOICES = [
+         "espeak_voice": "en-us",
+         "speed": 160,
+         "pitch": 46,
+-        "amplitude": 130,
+-        "description": "Classic retro-computer formant voice. The default.",
++        "amplitude": 100,
++        "description": "Classic retro-computer formant voice.",
+     },
+     {
+         "id": "scrap-deep",
+@@ -27,7 +66,7 @@ TTS_VOICES = [
+         "espeak_voice": "en-us+m3",
+         "speed": 148,
+         "pitch": 24,
+-        "amplitude": 130,
++        "amplitude": 100,
+         "description": "Slower, lower robot. Sounds like heavy machinery.",
+     },
+     {
+@@ -38,7 +77,7 @@ TTS_VOICES = [
+         "espeak_voice": "en-us+croak",
+         "speed": 152,
+         "pitch": 32,
+-        "amplitude": 130,
++        "amplitude": 100,
+         "description": "Damaged-hardware rasp. Maximum post-apocalypse.",
+     },
+     # ── Piper — neural, human-sounding (secondary) ──
+@@ -101,9 +140,21 @@ def espeak_available() -> bool:
+     return shutil.which(ESPEAK_BINARY) is not None
+ 
+ 
++def _mbrola_voice_available(data_name: str) -> bool:
++    return (
++        shutil.which(MBROLA_BINARY) is not None
++        and (MBROLA_DATA_DIR / data_name / data_name).is_file()
++    )
++
++
+ def is_voice_available(voice: dict, base_dir: Path) -> bool:
+     if voice["engine"] == "espeak":
+-        return espeak_available()
++        if not espeak_available():
++            return False
++        mbrola_data = voice.get("mbrola_data")
++        if mbrola_data:
++            return _mbrola_voice_available(mbrola_data)
++        return True
+     paths = _voice_paths(voice, base_dir)
+     return paths["model_path"].is_file() and paths["config_path"].is_file()
+ 

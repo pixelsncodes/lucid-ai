@@ -36,7 +36,9 @@ from config import (
     STT_MODEL,
     SYSTEM_PROMPT,
     TTS_MAX_TEXT_LENGTH,
+    TTS_SENTENCE_SILENCE_SECONDS,
 )
+from kokoro_tts import synthesize_wav_bytes as kokoro_synthesize_wav_bytes
 from tts_voices import public_voice_payload, resolve_voice
 
 app = FastAPI(title="LUCID Backend")
@@ -129,6 +131,7 @@ class ChatRequest(BaseModel):
 class TTSRequest(BaseModel):
     text: str
     voice_id: Optional[str] = None
+    rate: Optional[float] = None
 
     @field_validator("text")
     @classmethod
@@ -139,6 +142,13 @@ class TTSRequest(BaseModel):
         if len(trimmed_text) > TTS_MAX_TEXT_LENGTH:
             raise ValueError(f"text must be {TTS_MAX_TEXT_LENGTH} characters or fewer")
         return trimmed_text
+
+    @field_validator("rate")
+    @classmethod
+    def validate_rate(cls, value):
+        if value is None:
+            return None
+        return min(1.5, max(0.5, float(value)))
 
     @field_validator("voice_id")
     @classmethod
@@ -1632,13 +1642,55 @@ def text_to_speech(request: TTSRequest):
     if voice is None:
         raise HTTPException(status_code=500, detail="Default TTS voice is unavailable.")
 
+    # ── Kokoro: in-process synthesis, model stays warm ──
+    if voice["engine"] == "kokoro":
+        rate = request.rate or 1.0
+        try:
+            wav_bytes = kokoro_synthesize_wav_bytes(
+                BASE_DIR,
+                request.text,
+                voice["kokoro_voice"],
+                speed=rate,
+            )
+        except Exception as error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"TTS generation failed for voice {voice['id']}: {error}",
+            )
+        headers = {"X-LUCID-TTS-Voice-Id": voice["id"]}
+        if fallback_used:
+            headers["X-LUCID-TTS-Fallback"] = "true"
+        return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
+
     temp_wav_path = None
     try:
         with NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
             temp_wav_path = Path(temp_wav.name)
 
+        rate = request.rate or 1.0
+
+        if voice["engine"] == "espeak":
+            command = [
+                "espeak-ng",
+                "-v", str(voice["espeak_voice"]),
+                "-s", str(int(round(voice["speed"] * rate))),
+                "-p", str(voice["pitch"]),
+                "-a", str(voice["amplitude"]),
+                "-w", str(temp_wav_path),
+                "--stdin",
+            ]
+        else:
+            command = [
+                sys.executable, "-m", "piper",
+                "-m", str(voice["model_path"]),
+                "-f", str(temp_wav_path),
+                # cadence: breathe between sentences, scale pace by request rate
+                "--sentence-silence", str(TTS_SENTENCE_SILENCE_SECONDS),
+                "--length-scale", str(round(1.0 / rate, 3)),
+            ]
+
         result = subprocess.run(
-            [sys.executable, "-m", "piper", "-m", str(voice["model_path"]), "-f", str(temp_wav_path)],
+            command,
             input=request.text,
             text=True,
             capture_output=True,
@@ -1646,7 +1698,7 @@ def text_to_speech(request: TTSRequest):
         )
 
         if result.returncode != 0:
-            error = result.stderr.strip() or "Piper exited with a non-zero status."
+            error = result.stderr.strip() or f"{voice['engine']} exited with a non-zero status."
             raise HTTPException(status_code=500, detail=f"TTS generation failed for voice {voice['id']}: {error}")
 
         wav_bytes = temp_wav_path.read_bytes()

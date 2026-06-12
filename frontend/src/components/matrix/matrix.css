@@ -1,0 +1,205 @@
+/* ── Dot Matrix engine ───────────────────────────────────────
+   Ported from dot-matrix-builder.html.
+   Variables: --ds dot size · --dg gap · --dc color
+   --ob base opacity · --op peak · --og unused-dot opacity
+   --cy cycle ms · --d per-dot delay */
+
+.dmx-grid {
+  display: grid;
+  grid-template-columns: repeat(5, var(--ds, 13px));
+  gap: var(--dg, 8px);
+}
+
+.dmx-dot {
+  width: var(--ds, 13px);
+  height: var(--ds, 13px);
+  border-radius: 50%;
+  background: var(--dc, currentColor);
+  display: block;
+  opacity: var(--ob, 0.14);
+  will-change: opacity;
+}
+
+.dmx-dot.off {
+  opacity: var(--og, 0.1) !important;
+  animation: none !important;
+}
+
+/* static lit */
+.dmx-dot.st {
+  animation: none;
+  opacity: var(--op, 1);
+}
+
+/* ripple (thinking) */
+.dmx-dot.ar {
+  animation: dmxR var(--cy, 1500ms) cubic-bezier(0.42, 0, 0.58, 1) infinite;
+  animation-delay: var(--d, 0ms);
+}
+
+@keyframes dmxR {
+  0%,
+  100% {
+    opacity: var(--ob);
+  }
+
+  50% {
+    opacity: var(--op, 1);
+  }
+}
+
+/* blink (eyes) */
+.dmx-dot.ab {
+  animation: dmxB calc(var(--cy, 1500ms) * 2.5) ease-in-out infinite;
+  animation-delay: var(--d, 0ms);
+}
+
+@keyframes dmxB {
+  0%,
+  86%,
+  96%,
+  100% {
+    opacity: var(--op, 1);
+  }
+
+  90%,
+  93% {
+    opacity: var(--ob);
+  }
+}
+
+/* talk (mouth flicker) */
+.dmx-dot.at {
+  animation: dmxT var(--cy, 1500ms) ease-in-out infinite;
+  animation-delay: var(--d, 0ms);
+}
+
+@keyframes dmxT {
+  0%,
+  100% {
+    opacity: var(--op, 1);
+  }
+
+  30% {
+    opacity: calc(var(--ob) * 1.6);
+  }
+
+  60% {
+    opacity: var(--op, 1);
+  }
+
+  80% {
+    opacity: calc(var(--ob) * 2.2);
+  }
+}
+
+/* speak EQ — upper / lower lip */
+.dmx-dot.vu {
+  animation: dmxVU 600ms linear infinite;
+  animation-delay: var(--d, 0ms);
+}
+
+.dmx-dot.vl {
+  animation: dmxVL 600ms linear infinite;
+  animation-delay: var(--d, 0ms);
+}
+
+@keyframes dmxVL {
+  0%,
+  52% {
+    opacity: var(--op, 1);
+  }
+
+  58%,
+  68% {
+    opacity: var(--ob, 0.14);
+  }
+
+  74%,
+  100% {
+    opacity: var(--op, 1);
+  }
+}
+
+@keyframes dmxVU {
+  0%,
+  16% {
+    opacity: var(--ob, 0.14);
+  }
+
+  21%,
+  38% {
+    opacity: var(--op, 1);
+  }
+
+  43%,
+  60% {
+    opacity: var(--ob, 0.14);
+  }
+
+  65%,
+  80% {
+    opacity: var(--op, 1);
+  }
+
+  85%,
+  100% {
+    opacity: var(--ob, 0.14);
+  }
+}
+
+/* breathing (sleep) — whole glyph swells together */
+.dmx-dot.br {
+  animation: dmxBr 4200ms ease-in-out infinite;
+}
+
+@keyframes dmxBr {
+  0%,
+  100% {
+    opacity: calc(var(--ob) * 1.6);
+  }
+
+  50% {
+    opacity: calc(var(--op, 1) * 0.78);
+  }
+}
+
+/* ticker — dots are fixed windows; the glyph scrolls across in steps */
+.dmx-dot.tk {
+  opacity: 1 !important;
+  background-color: transparent;
+  background-size: 1000% 100%;
+  background-repeat: no-repeat;
+  animation: dmxTk var(--cy, 1500ms) steps(6, jump-none) 1 both;
+}
+
+@keyframes dmxTk {
+  from {
+    background-position-x: var(--x0, 0px);
+  }
+
+  to {
+    background-position-x: var(--x1, 0px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dmx-dot:not(.off) {
+    animation: none !important;
+    opacity: var(--ob) !important;
+  }
+
+  .dmx-dot.st,
+  .dmx-dot.ab,
+  .dmx-dot.at,
+  .dmx-dot.vu,
+  .dmx-dot.vl,
+  .dmx-dot.br {
+    opacity: var(--op, 1) !important;
+  }
+
+  .dmx-dot.tk {
+    animation: none !important;
+    background-position-x: var(--x1, 0px);
+  }
+}

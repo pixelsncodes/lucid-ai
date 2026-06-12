@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
-import AppShell from './components/AppShell'
-import TopBar from './components/TopBar'
-import VoiceWorkspace from './components/VoiceWorkspace'
-import DotmCircular8 from './components/dotmatrix/DotmCircular8'
-import DotmSquare1 from './components/dotmatrix/DotmSquare1'
-import DotmSquare8 from './components/dotmatrix/DotmSquare8'
-import DotmSquare18 from './components/dotmatrix/DotmSquare18'
+import { ASSISTANT_NAME } from './identity'
+import { extractReplyFace } from './components/matrix/engine'
+import MatrixStage from './components/MatrixStage'
+import ChatBar from './components/ChatBar'
+import ChatLog from './components/ChatLog'
+import SettingsDrawer from './components/SettingsDrawer'
+import { GearIcon } from './components/Icons'
 
 const DEFAULT_TEMPERATURE = 0.7
 const DEFAULT_NUM_CTX = 4096
@@ -17,17 +17,16 @@ const MAX_NUM_CTX = 32000
 const MAX_HISTORY_MESSAGES = 12
 const MAX_HISTORY_CONTENT_LENGTH = 2000
 const MAX_RECORDING_SECONDS = 30
+const RESUME_LISTEN_DELAY_MS = 420
 const AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
 const API_BASE_URL = 'http://127.0.0.1:8000'
 const FALLBACK_KNOWLEDGE_BASES = [{ id: 'none', name: 'None' }]
 
 const clampFiniteNumber = (value, min, max, fallback) => {
   const nextValue = Number(value)
-
   if (!Number.isFinite(nextValue)) {
     return fallback
   }
-
   return Math.min(max, Math.max(min, nextValue))
 }
 
@@ -45,32 +44,45 @@ function App() {
   const [voiceError, setVoiceError] = useState('')
   const [models, setModels] = useState([])
   const [selectedModel, setSelectedModel] = useState('')
-  const [modelStatus, setModelStatus] = useState('loading')
   const [voices, setVoices] = useState([])
   const [selectedVoiceId, setSelectedVoiceId] = useState('')
-  const [voiceStatus, setVoiceStatus] = useState('loading')
+  const [speechRate, setSpeechRate] = useState(0.95)
   const [knowledgeBases, setKnowledgeBases] = useState(FALLBACK_KNOWLEDGE_BASES)
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState('none')
-  const [knowledgeBaseStatus, setKnowledgeBaseStatus] = useState('loading')
   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
   const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX)
+  // Voice-first defaults: replies are spoken, voice is sent automatically.
   const [autoSpeak, setAutoSpeak] = useState(true)
-  const [autoSendVoice, setAutoSendVoice] = useState(false)
-  const [conversationMode, setConversationMode] = useState(true)
+  const [autoSendVoice, setAutoSendVoice] = useState(true)
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState(null)
   const [speechStatus, setSpeechStatus] = useState(null)
-  const [isChatOpen] = useState(true)
+  const [uiMode, setUiMode] = useState('voice') // 'voice' | 'chat'
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [conversationActive, setConversationActive] = useState(false)
+  const [analyser, setAnalyser] = useState(null)
+  const [replyFace, setReplyFace] = useState(null) // { face, id }
+  const [isLaughing, setIsLaughing] = useState(false)
+  const [lastInteraction, setLastInteraction] = useState(() => Date.now())
+
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const mediaStreamRef = useRef(null)
+  const audioContextRef = useRef(null)
   const recordingModeRef = useRef(null)
   const recordingTimeoutRef = useRef(null)
+  const discardRecordingRef = useRef(false)
   const chatMessagesRef = useRef([])
   const autoSpeakRef = useRef(true)
-  const autoSendVoiceRef = useRef(false)
+  const autoSendVoiceRef = useRef(true)
+  const conversationActiveRef = useRef(false)
+  const resumeListenTimerRef = useRef(null)
   const nextChatMessageIdRef = useRef(1)
   const autoSpokenMessageIdsRef = useRef(new Set())
   const activeSpeechRef = useRef(null)
+  const laughRunRef = useRef(null)
+  const laughClipCacheRef = useRef(null) // { voiceId, url }
+
+  const markInteraction = useCallback(() => setLastInteraction(Date.now()), [])
 
   const clearRecordingTimeout = () => {
     if (recordingTimeoutRef.current) {
@@ -79,57 +91,60 @@ function App() {
     }
   }
 
+  const clearResumeListenTimer = () => {
+    if (resumeListenTimerRef.current) {
+      window.clearTimeout(resumeListenTimerRef.current)
+      resumeListenTimerRef.current = null
+    }
+  }
+
+  const setConversationActiveBoth = (value) => {
+    conversationActiveRef.current = value
+    setConversationActive(value)
+  }
+
+  const teardownAnalyser = () => {
+    setAnalyser(null)
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {})
+      audioContextRef.current = null
+    }
+  }
+
+  // ── initial data ──
   useEffect(() => {
-    const statusUrl = `${API_BASE_URL}/`
-
-    fetch(statusUrl)
+    fetch(`${API_BASE_URL}/`)
       .then((response) => {
-        if (!response.ok) {
-          throw new Error('Backend status request failed')
-        }
-
+        if (!response.ok) throw new Error('Backend status request failed')
         return response.json()
       })
       .then((data) => {
-        const isBackendRunning = data?.status === 'backend running'
-        setBackendStatus(isBackendRunning ? 'online' : 'offline')
+        setBackendStatus(data?.status === 'backend running' ? 'online' : 'offline')
       })
-      .catch(() => {
-        setBackendStatus('offline')
-      })
+      .catch(() => setBackendStatus('offline'))
   }, [])
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/models`)
       .then((response) => {
-        if (!response.ok) {
-          throw new Error('Models request failed')
-        }
-
+        if (!response.ok) throw new Error('Models request failed')
         return response.json()
       })
       .then((data) => {
         const availableModels = Array.isArray(data.models) ? data.models : []
-        const defaultModel = data.default_model || availableModels[0] || ''
-
         setModels(availableModels)
-        setSelectedModel(defaultModel)
-        setModelStatus(availableModels.length > 0 ? 'ready' : 'empty')
+        setSelectedModel(data.default_model || availableModels[0] || '')
       })
       .catch(() => {
         setModels([])
         setSelectedModel('')
-        setModelStatus('offline')
       })
   }, [])
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/knowledge-bases`)
       .then((response) => {
-        if (!response.ok) {
-          throw new Error('Knowledge bases request failed')
-        }
-
+        if (!response.ok) throw new Error('Knowledge bases request failed')
         return response.json()
       })
       .then((data) => {
@@ -147,28 +162,25 @@ function App() {
           }))
           .filter((knowledgeBase) => knowledgeBase.id && knowledgeBase.name)
 
-        setKnowledgeBases(availableKnowledgeBases)
+        setKnowledgeBases(
+          availableKnowledgeBases.length > 0 ? availableKnowledgeBases : FALLBACK_KNOWLEDGE_BASES,
+        )
         setSelectedKnowledgeBase(
           availableKnowledgeBases.some((knowledgeBase) => knowledgeBase.id === 'none')
             ? 'none'
-            : availableKnowledgeBases[0]?.id || '',
+            : availableKnowledgeBases[0]?.id || 'none',
         )
-        setKnowledgeBaseStatus(availableKnowledgeBases.length > 0 ? 'ready' : 'empty')
       })
       .catch(() => {
         setKnowledgeBases(FALLBACK_KNOWLEDGE_BASES)
         setSelectedKnowledgeBase('none')
-        setKnowledgeBaseStatus('offline')
       })
   }, [])
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/tts/voices`)
       .then((response) => {
-        if (!response.ok) {
-          throw new Error('Voices request failed')
-        }
-
+        if (!response.ok) throw new Error('Voices request failed')
         return response.json()
       })
       .then((data) => {
@@ -177,9 +189,6 @@ function App() {
           .map((voice) => ({
             id: String(voice?.id || ''),
             name: String(voice?.name || voice?.id || ''),
-            engine: String(voice?.engine || ''),
-            language: String(voice?.language || ''),
-            description: String(voice?.description || ''),
             available: Boolean(voice?.available),
           }))
           .filter((voice) => voice.id && voice.name)
@@ -188,24 +197,26 @@ function App() {
           (voice) => voice.id === defaultVoiceId && voice.available,
         )
         const firstAvailableVoice = availableVoices.find((voice) => voice.available)
-
         setVoices(availableVoices)
         setSelectedVoiceId(defaultVoice?.id || firstAvailableVoice?.id || defaultVoiceId)
-        setVoiceStatus(availableVoices.length > 0 ? 'ready' : 'empty')
       })
       .catch(() => {
         setVoices([])
         setSelectedVoiceId('')
-        setVoiceStatus('offline')
       })
   }, [])
 
+  // ── unmount cleanup ──
   useEffect(
     () => () => {
       clearRecordingTimeout()
+      clearResumeListenTimer()
       activeSpeechRef.current?.cleanup({ abortRequest: true, stopAudio: true })
       mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop())
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {})
+      }
     },
     [],
   )
@@ -222,6 +233,7 @@ function App() {
     autoSendVoiceRef.current = autoSendVoice
   }, [autoSendVoice])
 
+  // ── chat ──
   const sendChatMessage = async (
     text,
     { allowDuringTranscribe = false, allowDuringRecording = false } = {},
@@ -260,17 +272,16 @@ function App() {
       }))
       .filter((chatMessage) => chatMessage.content)
       .slice(-MAX_HISTORY_MESSAGES)
-    const userMessage = { role: 'user', text: trimmedMessage }
-    setChatMessages((currentMessages) => [...currentMessages, userMessage])
+
+    setChatMessages((currentMessages) => [...currentMessages, { role: 'user', text: trimmedMessage }])
     setMessage('')
     setIsSending(true)
+    setVoiceError('')
 
     try {
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: trimmedMessage,
           history,
@@ -286,19 +297,25 @@ function App() {
       }
 
       const data = await response.json()
+      // Emotion contract: a reply may end with one emoticon (e.g. ":P");
+      // it is stripped from the text/TTS and shown on the matrix instead.
+      const { text: cleanedText, face } = extractReplyFace(data.reply || 'No reply received.')
+      const messageId = nextChatMessageIdRef.current++
       const assistantMessage = {
-        id: nextChatMessageIdRef.current++,
+        id: messageId,
         role: 'assistant',
-        text: data.reply || 'No reply received.',
+        text: cleanedText,
+        face,
         sources: Array.isArray(data.sources) ? data.sources : [],
         autoSpeak: autoSpeakRef.current,
       }
 
-      setChatMessages((currentMessages) => [
-        ...currentMessages,
-        assistantMessage,
-      ])
+      if (face) {
+        setReplyFace({ face, id: messageId })
+      }
+      setChatMessages((currentMessages) => [...currentMessages, assistantMessage])
     } catch {
+      setConversationActiveBoth(false)
       setChatMessages((currentMessages) => [
         ...currentMessages,
         { role: 'assistant', text: 'Unable to reach the chat backend.' },
@@ -310,6 +327,7 @@ function App() {
     return true
   }
 
+  // ── speech to text ──
   const transcribeAudio = async (audioBlob, { autoSend = false } = {}) => {
     setIsTranscribing(true)
     setVoiceError('')
@@ -341,14 +359,17 @@ function App() {
         })
       } else {
         setMessage(transcript)
+        setUiMode('chat')
       }
     } catch {
-      setVoiceError('Unable to transcribe audio.')
+      setConversationActiveBoth(false)
+      setVoiceError("didn't catch that")
     } finally {
       setIsTranscribing(false)
     }
   }
 
+  // ── recording ──
   const handleToggleRecording = async (mode = 'draft') => {
     const willAutoSend = mode === 'send' && autoSendVoiceRef.current
 
@@ -365,13 +386,14 @@ function App() {
     }
 
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      setVoiceError('Audio recording is not supported in this browser.')
+      setVoiceError('audio recording is not supported in this browser')
       return
     }
 
     try {
       setVoiceError('')
       audioChunksRef.current = []
+      discardRecordingRef.current = false
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mimeType = AUDIO_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) || ''
@@ -382,6 +404,21 @@ function App() {
       recordingModeRef.current = mode
       setRecordingMode(mode)
 
+      // feed the matrix visualizer
+      try {
+        const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+        const audioContext = new AudioContextCtor()
+        const source = audioContext.createMediaStreamSource(stream)
+        const analyserNode = audioContext.createAnalyser()
+        analyserNode.fftSize = 128
+        analyserNode.smoothingTimeConstant = 0.55
+        source.connect(analyserNode)
+        audioContextRef.current = audioContext
+        setAnalyser(analyserNode)
+      } catch {
+        setAnalyser(null)
+      }
+
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data)
@@ -390,24 +427,32 @@ function App() {
 
       recorder.onstop = () => {
         const stoppedMode = recordingModeRef.current
+        const discard = discardRecordingRef.current
+        discardRecordingRef.current = false
         clearRecordingTimeout()
         setIsRecording(false)
         setRecordingMode(null)
         recordingModeRef.current = null
         stream.getTracks().forEach((track) => track.stop())
         mediaStreamRef.current = null
+        teardownAnalyser()
 
         const audioBlob = new Blob(audioChunksRef.current, {
           type: recorder.mimeType || mimeType || 'audio/webm',
         })
         audioChunksRef.current = []
 
+        if (discard) {
+          return
+        }
+
         if (audioBlob.size > 0) {
           transcribeAudio(audioBlob, {
             autoSend: stoppedMode === 'send' && autoSendVoiceRef.current,
           })
         } else {
-          setVoiceError('No audio was recorded.')
+          setConversationActiveBoth(false)
+          setVoiceError('no audio was recorded')
         }
       }
 
@@ -425,35 +470,24 @@ function App() {
       recordingModeRef.current = null
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
       mediaStreamRef.current = null
-      setVoiceError('Unable to access the microphone.')
+      teardownAnalyser()
+      setConversationActiveBoth(false)
+      setVoiceError('unable to access the microphone')
     }
   }
 
-  const handleSendMessage = async (event) => {
-    event.preventDefault()
-    await sendChatMessage(message)
-  }
-
-  const handleConversationModeChange = (enabled) => {
-    setConversationMode(enabled)
-    setAutoSpeak(enabled)
-    autoSpeakRef.current = enabled
-  }
-
-  const handleAutoSendVoiceChange = (enabled) => {
-    setAutoSendVoice(enabled)
-    autoSendVoiceRef.current = enabled
+  const cancelRecording = () => {
+    if (!isRecording) return
+    discardRecordingRef.current = true
+    clearRecordingTimeout()
+    mediaRecorderRef.current?.stop()
   }
 
   const stopActiveSpeech = () => {
     activeSpeechRef.current?.cleanup({ abortRequest: true, stopAudio: true })
   }
 
-  const handleVoiceMatrixRecording = async (mode = 'send') => {
-    stopActiveSpeech()
-    await handleToggleRecording(mode)
-  }
-
+  // ── text to speech ──
   const handleSpeakMessage = async (chatMessage, index) => {
     if (!chatMessage.text.trim()) {
       return
@@ -467,6 +501,9 @@ function App() {
     stopActiveSpeech()
     setSpeakingMessageIndex(index)
     setSpeechStatus('loading')
+    if (chatMessage.face) {
+      setReplyFace({ face: chatMessage.face, id: `replay-${index}-${Date.now()}` })
+    }
 
     const controller = new AbortController()
     let audio = null
@@ -476,7 +513,6 @@ function App() {
       if (hasCleanedUp) {
         return
       }
-
       hasCleanedUp = true
 
       if (abortRequest) {
@@ -484,9 +520,7 @@ function App() {
       }
 
       if (audio) {
-        audio.removeEventListener('ended', cleanupSpeakMessage)
         audio.removeEventListener('error', cleanupSpeakMessage)
-
         if (stopAudio) {
           audio.pause()
           audio.currentTime = 0
@@ -495,12 +529,20 @@ function App() {
         }
       }
 
+      // cancel an in-flight laugh
+      if (laughRunRef.current) {
+        laughRunRef.current.cancelled = true
+        laughRunRef.current.audio?.pause()
+        laughRunRef.current.finish?.()
+        laughRunRef.current = null
+      }
+      setIsLaughing(false)
+
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl)
       }
 
       const isActiveSpeech = activeSpeechRef.current?.cleanup === cleanupSpeakMessage
-
       if (isActiveSpeech) {
         activeSpeechRef.current = null
       }
@@ -515,16 +557,14 @@ function App() {
     }
 
     try {
-      const ttsPayload = { text: chatMessage.text }
+      const ttsPayload = { text: chatMessage.text, rate: speechRate }
       if (selectedVoiceId) {
         ttsPayload.voice_id = selectedVoiceId
       }
 
       const response = await fetch(`${API_BASE_URL}/tts`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ttsPayload),
         signal: controller.signal,
       })
@@ -537,7 +577,81 @@ function App() {
       audioUrl = URL.createObjectURL(audioBlob)
       audio = new Audio(audioUrl)
 
-      audio.addEventListener('ended', cleanupSpeakMessage, { once: true })
+      // Joke contract: a reply tagged :D gets a beat of silence,
+      // a spoken "Ha ha!", and the laughing animation.
+      const playLaughClip = async () => {
+        const run = { cancelled: false, audio: null, finish: null }
+        laughRunRef.current = run
+
+        await new Promise((resolve) => {
+          run.finish = resolve
+          window.setTimeout(resolve, 380)
+        })
+        if (run.cancelled) return
+
+        let clipUrl =
+          laughClipCacheRef.current?.voiceId === selectedVoiceId &&
+          laughClipCacheRef.current?.rate === speechRate
+            ? laughClipCacheRef.current.url
+            : null
+        if (!clipUrl) {
+          const laughPayload = { text: 'Ha ha!', rate: speechRate }
+          if (selectedVoiceId) {
+            laughPayload.voice_id = selectedVoiceId
+          }
+          const laughResponse = await fetch(`${API_BASE_URL}/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(laughPayload),
+          })
+          if (!laughResponse.ok) {
+            throw new Error('Laugh TTS request failed')
+          }
+          const laughBlob = await laughResponse.blob()
+          clipUrl = URL.createObjectURL(laughBlob)
+          if (laughClipCacheRef.current?.url) {
+            URL.revokeObjectURL(laughClipCacheRef.current.url)
+          }
+          laughClipCacheRef.current = { voiceId: selectedVoiceId, rate: speechRate, url: clipUrl }
+        }
+        if (run.cancelled) return
+
+        const laughAudio = new Audio(clipUrl)
+        run.audio = laughAudio
+        setIsLaughing(true)
+        await new Promise((resolve) => {
+          run.finish = resolve
+          laughAudio.addEventListener('ended', resolve, { once: true })
+          laughAudio.addEventListener('error', resolve, { once: true })
+          laughAudio.play().catch(resolve)
+        })
+        setIsLaughing(false)
+        if (laughRunRef.current === run) {
+          laughRunRef.current = null
+        }
+      }
+
+      const handleNaturalEnd = async () => {
+        if (chatMessage.face === ':D') {
+          try {
+            await playLaughClip()
+          } catch {
+            setIsLaughing(false)
+            laughRunRef.current = null
+          }
+        }
+        cleanupSpeakMessage()
+        // Conversation loop: when a spoken reply finishes naturally,
+        // go straight back to listening.
+        if (conversationActiveRef.current && autoSendVoiceRef.current) {
+          clearResumeListenTimer()
+          resumeListenTimerRef.current = window.setTimeout(() => {
+            handleToggleRecording('send')
+          }, RESUME_LISTEN_DELAY_MS)
+        }
+      }
+
+      audio.addEventListener('ended', handleNaturalEnd, { once: true })
       audio.addEventListener('error', cleanupSpeakMessage, { once: true })
       try {
         await audio.play()
@@ -550,10 +664,10 @@ function App() {
       }
     } catch {
       cleanupSpeakMessage()
-      // TTS playback is manually requested, so failures should not affect chat behavior.
     }
   }
 
+  // auto-speak fresh assistant replies
   useEffect(() => {
     const lastMessageIndex = chatMessages.length - 1
     const lastMessage = chatMessages[lastMessageIndex]
@@ -568,190 +682,207 @@ function App() {
 
     autoSpokenMessageIdsRef.current.add(lastMessage.id)
     handleSpeakMessage(lastMessage, lastMessageIndex)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatMessages])
 
-  const voiceStatusLabel = isRecording
-    ? 'Listening'
-    : isTranscribing
-      ? 'Transcribing'
-      : isSending
-        ? 'Thinking'
-        : speechStatus === 'playing' || speechStatus === 'loading'
-          ? 'Speaking'
-          : 'Idle'
+  // ── interaction handlers ──
+  const endConversation = useCallback(() => {
+    setConversationActiveBoth(false)
+    clearResumeListenTimer()
+    stopActiveSpeech()
+    cancelRecording()
+  }, [isRecording]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const VoiceLoader =
-    voiceStatusLabel === 'Listening'
-      ? DotmSquare18
-      : voiceStatusLabel === 'Transcribing' || voiceStatusLabel === 'Thinking'
-        ? DotmSquare8
-        : voiceStatusLabel === 'Speaking'
-          ? DotmCircular8
-          : DotmSquare1
-  const voiceLoaderSettings = {
-    Idle: {
-      boxSize: 112,
-      minSize: 112,
-      dotSize: 12,
-      cellPadding: 6,
-      speed: 1.45,
-      bloom: false,
-      halo: 0,
-      opacityBase: 0.28,
-      opacityMid: 0.62,
-      opacityPeak: 1,
-      opacity: 0.86,
-    },
-    Listening: {
-      boxSize: 112,
-      minSize: 112,
-      dotSize: 12,
-      cellPadding: 6,
-      speed: 0.74,
-      bloom: false,
-      halo: 0,
-      opacityBase: 0.32,
-      opacityMid: 0.68,
-      opacityPeak: 1,
-      opacity: 1,
-    },
-    Transcribing: {
-      boxSize: 112,
-      minSize: 112,
-      dotSize: 12,
-      cellPadding: 6,
-      speed: 0.9,
-      bloom: false,
-      halo: 0,
-      opacityBase: 0.3,
-      opacityMid: 0.66,
-      opacityPeak: 1,
-      opacity: 0.94,
-    },
-    Thinking: {
-      boxSize: 112,
-      minSize: 112,
-      dotSize: 12,
-      cellPadding: 6,
-      speed: 0.9,
-      bloom: false,
-      halo: 0,
-      opacityBase: 0.3,
-      opacityMid: 0.66,
-      opacityPeak: 1,
-      opacity: 0.94,
-    },
-    Speaking: {
-      boxSize: 112,
-      minSize: 112,
-      dotSize: 12,
-      cellPadding: 6,
-      speed: 0.78,
-      bloom: false,
-      halo: 0,
-      opacityBase: 0.32,
-      opacityMid: 0.68,
-      opacityPeak: 1,
-      opacity: 1,
-    },
-  }[voiceStatusLabel]
-  const voiceStatusDetail = isRecording
-    ? `Listening · ${MAX_RECORDING_SECONDS}s max`
-    : isTranscribing
-      ? 'Transcribing voice'
-      : isSending
-        ? 'Thinking locally'
-        : speechStatus === 'playing' || speechStatus === 'loading'
-          ? 'Speaking response'
-          : selectedModel.trim()
-            ? 'Ready for voice'
-            : 'Select a model'
-  const isVoiceActionDisabled =
-    isSending ||
-    isTranscribing ||
-    (autoSendVoice && !selectedModel.trim()) ||
-    (isRecording && recordingMode !== 'send')
-  const voiceActionLabel = isTranscribing
-    ? 'Transcribing'
-    : isRecording && recordingMode === 'send'
-      ? autoSendVoice
-        ? 'Stop & Send'
-        : 'Stop'
-      : 'Speak'
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !settingsOpen) {
+        endConversation()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [endConversation, settingsOpen])
+
+  const handleMatrixPress = () => {
+    markInteraction()
+    setUiMode('voice')
+    setVoiceError('')
+
+    if (isRecording) {
+      // "I'm done talking" — stop & send (or stop the dictation)
+      mediaRecorderRef.current?.stop()
+      return
+    }
+    if (isSending || isTranscribing) {
+      return
+    }
+    if (speechStatus === 'playing' || speechStatus === 'loading') {
+      stopActiveSpeech()
+    }
+    setConversationActiveBoth(true)
+    handleToggleRecording('send')
+  }
+
+  const handleSendTyped = () => {
+    markInteraction()
+    sendChatMessage(message)
+  }
+
+  const handleDictate = () => {
+    markInteraction()
+    stopActiveSpeech()
+    handleToggleRecording('draft')
+  }
+
+  const handleMessageChange = (value) => {
+    markInteraction()
+    setMessage(value)
+  }
+
+  const handleFocusInput = () => {
+    markInteraction()
+    setUiMode('chat')
+  }
+
+  // clicking any blank area collapses chat back to voice mode
+  const handleShellPointerDown = (event) => {
+    if (uiMode !== 'chat') return
+    if (
+      event.target.closest(
+        'input, button, select, textarea, a, .chat-log, .chat-bar, .drawer-root',
+      )
+    ) {
+      return
+    }
+    markInteraction()
+    setUiMode('voice')
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+  }
+
+  // ── derived ──
+  const status = isRecording
+    ? 'listening'
+    : isTranscribing || isSending
+      ? 'thinking'
+      : speechStatus === 'playing' || speechStatus === 'loading'
+        ? 'speaking'
+        : 'idle'
+
+  const statusDetail =
+    status === 'listening'
+      ? 'listening'
+      : status === 'thinking'
+        ? 'thinking'
+        : status === 'speaking'
+          ? 'speaking'
+          : voiceError
+            ? voiceError
+            : !selectedModel.trim()
+              ? 'no model selected — check settings'
+              : conversationActive
+                ? 'tap the grid to talk'
+                : 'tap the grid to talk · or type below'
+
+  const pressLabel =
+    status === 'listening'
+      ? 'Stop listening and send'
+      : status === 'speaking'
+        ? 'Interrupt and talk'
+        : 'Start voice conversation'
+
+  const canSend =
+    message.trim().length > 0 && selectedModel.trim().length > 0 && !isSending && !isTranscribing
 
   return (
-    <AppShell
-      topbar={
-        <TopBar
-          backendStatus={backendStatus}
-          knowledgeBases={knowledgeBases}
-          selectedKnowledgeBase={selectedKnowledgeBase}
-          knowledgeBaseStatus={knowledgeBaseStatus}
-          onSelectedKnowledgeBaseChange={setSelectedKnowledgeBase}
+    <div className={`shell shell--${uiMode}`} onPointerDown={handleShellPointerDown}>
+      <header className="shell-top">
+        <button
+          type="button"
+          className="settings-button"
+          onClick={() => {
+            markInteraction()
+            setSettingsOpen(true)
+          }}
+          aria-label="Open settings"
+          title="Settings"
+        >
+          <GearIcon />
+        </button>
+        <div className="brand" title={`backend ${backendStatus}`}>
+          <span className={`brand-dot brand-dot--${backendStatus}`} aria-hidden="true" />
+          <span className="brand-name">{ASSISTANT_NAME.toLowerCase()}</span>
+        </div>
+      </header>
+
+      <main className="stage">
+        <MatrixStage
+          status={status}
+          statusDetail={statusDetail}
+          analyser={analyser}
+          replyFace={replyFace}
+          laughing={isLaughing}
+          hasError={Boolean(voiceError)}
+          lastInteraction={lastInteraction}
+          onPress={handleMatrixPress}
+          pressLabel={pressLabel}
         />
-      }
-    >
-      <VoiceWorkspace
-        VoiceLoader={VoiceLoader}
-        voiceLoaderSettings={voiceLoaderSettings}
-        voiceStatusLabel={voiceStatusLabel}
-        voiceStatusDetail={voiceStatusDetail}
-        voiceActionLabel={voiceActionLabel}
-        isRecording={isRecording}
-        recordingMode={recordingMode}
-        isVoiceActionDisabled={isVoiceActionDisabled}
+        {conversationActive && status !== 'idle' ? (
+          <button type="button" className="end-conversation" onClick={endConversation}>
+            end conversation · esc
+          </button>
+        ) : null}
+      </main>
+
+      <footer className="dock">
+        {uiMode === 'chat' ? (
+          <ChatLog
+            messages={chatMessages}
+            onSpeak={handleSpeakMessage}
+            speakingIndex={speakingMessageIndex}
+          />
+        ) : null}
+        <ChatBar
+          message={message}
+          onMessageChange={handleMessageChange}
+          onSend={handleSendTyped}
+          onDictate={handleDictate}
+          onFocusInput={handleFocusInput}
+          isRecordingDraft={isRecording && recordingMode === 'draft'}
+          isTranscribing={isTranscribing}
+          isSending={isSending}
+          canSend={canSend}
+        />
+      </footer>
+
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        models={models}
+        selectedModel={selectedModel}
+        onSelectedModelChange={setSelectedModel}
+        voices={voices}
+        selectedVoiceId={selectedVoiceId}
+        onSelectedVoiceIdChange={setSelectedVoiceId}
+        speechRate={speechRate}
+        onSpeechRateChange={setSpeechRate}
+        knowledgeBases={knowledgeBases}
+        selectedKnowledgeBase={selectedKnowledgeBase}
+        onSelectedKnowledgeBaseChange={setSelectedKnowledgeBase}
+        temperature={temperature}
+        onTemperatureChange={(value) =>
+          setTemperature(clampFiniteNumber(value, MIN_TEMPERATURE, MAX_TEMPERATURE, DEFAULT_TEMPERATURE))
+        }
+        numCtx={numCtx}
+        onNumCtxChange={(value) => setNumCtx(clampContextSize(value))}
+        autoSpeak={autoSpeak}
+        onAutoSpeakChange={setAutoSpeak}
         autoSendVoice={autoSendVoice}
-        handleToggleRecording={handleVoiceMatrixRecording}
-        chatMessages={chatMessages}
-        voiceError={voiceError}
-        controlDockProps={{
-          models,
-          selectedModel,
-          modelStatus,
-          voices,
-          selectedVoiceId,
-          voiceStatus,
-          temperature,
-          numCtx,
-          autoSpeak,
-          autoSendVoice,
-          conversationMode,
-          onSelectedModelChange: setSelectedModel,
-          onSelectedVoiceIdChange: setSelectedVoiceId,
-          onTemperatureChange: (value) =>
-            setTemperature(
-              clampFiniteNumber(
-                value,
-                MIN_TEMPERATURE,
-                MAX_TEMPERATURE,
-                DEFAULT_TEMPERATURE,
-              ),
-            ),
-          onNumCtxChange: (value) => setNumCtx(clampContextSize(value)),
-          onAutoSpeakChange: setAutoSpeak,
-          onAutoSendVoiceChange: handleAutoSendVoiceChange,
-          onConversationModeChange: handleConversationModeChange,
-        }}
-        chatPanelProps={{
-          isChatOpen,
-          chatMessages,
-          message,
-          setMessage,
-          handleSendMessage,
-          handleToggleRecording,
-          handleSpeakMessage,
-          speakingMessageIndex,
-          speechStatus,
-          isSending,
-          isRecording,
-          isTranscribing,
-          recordingMode,
-          selectedModel,
-          autoSendVoice,
-          conversationMode,
-        }}
+        onAutoSendVoiceChange={setAutoSendVoice}
+        backendStatus={backendStatus}
       />
-    </AppShell>
+    </div>
   )
 }
 

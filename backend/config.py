@@ -15,6 +15,12 @@ PLANNER_MODE = os.getenv("PLANNER_MODE", "follow_up")
 
 TTS_MODEL_PATH = "models/piper/en_US-lessac-medium.onnx"
 TTS_MAX_TEXT_LENGTH = 2000
+# piper 1.4.2 builds its inter-sentence silence as int(sample_rate * seconds * 2)
+# zero BYTES; if that lands on an odd number (e.g. 0.45s @ 22050 Hz), every
+# sample after the first silence insert is byte-shifted and the rest of the
+# clip decodes as loud static. Keep this a value that yields whole samples
+# at 22050 Hz (multiples of 0.1 are safe).
+TTS_SENTENCE_SILENCE_SECONDS = 0.4
 
 SYSTEM_PROMPT = (
     "You are LUCID, the Local Unified Conversational Intelligence Desk. "

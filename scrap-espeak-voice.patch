@@ -1,0 +1,164 @@
+diff --git a/backend/main.py b/backend/main.py
+index 59dd094..2b2475c 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -1637,8 +1637,25 @@ def text_to_speech(request: TTSRequest):
+         with NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+             temp_wav_path = Path(temp_wav.name)
+ 
++        if voice["engine"] == "espeak":
++            command = [
++                "espeak-ng",
++                "-v", str(voice["espeak_voice"]),
++                "-s", str(voice["speed"]),
++                "-p", str(voice["pitch"]),
++                "-a", str(voice["amplitude"]),
++                "-w", str(temp_wav_path),
++                "--stdin",
++            ]
++        else:
++            command = [
++                sys.executable, "-m", "piper",
++                "-m", str(voice["model_path"]),
++                "-f", str(temp_wav_path),
++            ]
++
+         result = subprocess.run(
+-            [sys.executable, "-m", "piper", "-m", str(voice["model_path"]), "-f", str(temp_wav_path)],
++            command,
+             input=request.text,
+             text=True,
+             capture_output=True,
+@@ -1646,7 +1663,7 @@ def text_to_speech(request: TTSRequest):
+         )
+ 
+         if result.returncode != 0:
+-            error = result.stderr.strip() or "Piper exited with a non-zero status."
++            error = result.stderr.strip() or f"{voice['engine']} exited with a non-zero status."
+             raise HTTPException(status_code=500, detail=f"TTS generation failed for voice {voice['id']}: {error}")
+ 
+         wav_bytes = temp_wav_path.read_bytes()
+diff --git a/backend/tts_voices.py b/backend/tts_voices.py
+index c76e1af..1ae5e63 100644
+--- a/backend/tts_voices.py
++++ b/backend/tts_voices.py
+@@ -1,9 +1,47 @@
++import shutil
+ from pathlib import Path
+ 
+ 
+-TTS_DEFAULT_VOICE_ID = "ryan-medium"
++TTS_DEFAULT_VOICE_ID = "scrap-standard"
++
++ESPEAK_BINARY = "espeak-ng"
+ 
+ TTS_VOICES = [
++    # ── eSpeak NG — formant synthesis, the authentic robot ──
++    {
++        "id": "scrap-standard",
++        "name": "SCRAP Standard (robotic)",
++        "engine": "espeak",
++        "language": "en-US",
++        "espeak_voice": "en-us",
++        "speed": 160,
++        "pitch": 46,
++        "amplitude": 130,
++        "description": "Classic retro-computer formant voice. The default.",
++    },
++    {
++        "id": "scrap-deep",
++        "name": "SCRAP Deep (robotic)",
++        "engine": "espeak",
++        "language": "en-US",
++        "espeak_voice": "en-us+m3",
++        "speed": 148,
++        "pitch": 24,
++        "amplitude": 130,
++        "description": "Slower, lower robot. Sounds like heavy machinery.",
++    },
++    {
++        "id": "scrap-glitch",
++        "name": "SCRAP Glitch (robotic)",
++        "engine": "espeak",
++        "language": "en-US",
++        "espeak_voice": "en-us+croak",
++        "speed": 152,
++        "pitch": 32,
++        "amplitude": 130,
++        "description": "Damaged-hardware rasp. Maximum post-apocalypse.",
++    },
++    # ── Piper — neural, human-sounding (secondary) ──
+     {
+         "id": "lessac-medium",
+         "name": "Lessac Medium",
+@@ -59,12 +97,18 @@ def _voice_paths(voice: dict[str, str], base_dir: Path) -> dict[str, Path]:
+     }
+ 
+ 
+-def is_voice_available(voice: dict[str, str], base_dir: Path) -> bool:
++def espeak_available() -> bool:
++    return shutil.which(ESPEAK_BINARY) is not None
++
++
++def is_voice_available(voice: dict, base_dir: Path) -> bool:
++    if voice["engine"] == "espeak":
++        return espeak_available()
+     paths = _voice_paths(voice, base_dir)
+     return paths["model_path"].is_file() and paths["config_path"].is_file()
+ 
+ 
+-def get_available_voices(base_dir: Path) -> list[dict[str, str]]:
++def get_available_voices(base_dir: Path) -> list[dict]:
+     return [
+         voice
+         for voice in TTS_VOICES
+@@ -72,32 +116,38 @@ def get_available_voices(base_dir: Path) -> list[dict[str, str]]:
+     ]
+ 
+ 
+-def get_default_voice() -> dict[str, str] | None:
++def get_default_voice() -> dict | None:
+     return next(
+         (voice for voice in TTS_VOICES if voice["id"] == TTS_DEFAULT_VOICE_ID),
+         None,
+     )
+ 
+ 
+-def resolve_voice(voice_id: str | None, base_dir: Path) -> tuple[dict[str, str] | None, bool]:
++def _materialize(voice: dict, base_dir: Path) -> dict:
++    if voice["engine"] == "espeak":
++        return dict(voice)
++    return {**voice, **_voice_paths(voice, base_dir)}
++
++
++def resolve_voice(voice_id: str | None, base_dir: Path) -> tuple[dict | None, bool]:
+     requested_voice = next(
+         (voice for voice in TTS_VOICES if voice["id"] == voice_id),
+         None,
+     )
+-    default_voice = get_default_voice()
+ 
+     if requested_voice and is_voice_available(requested_voice, base_dir):
+-        return {
+-            **requested_voice,
+-            **_voice_paths(requested_voice, base_dir),
+-        }, False
++        return _materialize(requested_voice, base_dir), False
+ 
++    default_voice = get_default_voice()
+     if default_voice and is_voice_available(default_voice, base_dir):
+         fallback_used = bool(voice_id and voice_id != default_voice["id"])
+-        return {
+-            **default_voice,
+-            **_voice_paths(default_voice, base_dir),
+-        }, fallback_used
++        return _materialize(default_voice, base_dir), fallback_used
++
++    # last resort: any available voice, so TTS keeps working even
++    # when the default engine is missing (e.g. espeak-ng not installed)
++    for voice in TTS_VOICES:
++        if is_voice_available(voice, base_dir):
++            return _materialize(voice, base_dir), True
+ 
+     return None, False
+ 

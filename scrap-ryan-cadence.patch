@@ -1,0 +1,256 @@
+diff --git a/backend/config.py b/backend/config.py
+index 2eef32c..dad0c8a 100644
+--- a/backend/config.py
++++ b/backend/config.py
+@@ -15,6 +15,7 @@ PLANNER_MODE = os.getenv("PLANNER_MODE", "follow_up")
+ 
+ TTS_MODEL_PATH = "models/piper/en_US-lessac-medium.onnx"
+ TTS_MAX_TEXT_LENGTH = 2000
++TTS_SENTENCE_SILENCE_SECONDS = 0.45
+ 
+ SYSTEM_PROMPT = (
+     "You are LUCID, the Local Unified Conversational Intelligence Desk. "
+diff --git a/backend/main.py b/backend/main.py
+index 2b2475c..1ba0eea 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -36,6 +36,7 @@ from config import (
+     STT_MODEL,
+     SYSTEM_PROMPT,
+     TTS_MAX_TEXT_LENGTH,
++    TTS_SENTENCE_SILENCE_SECONDS,
+ )
+ from tts_voices import public_voice_payload, resolve_voice
+ 
+@@ -129,6 +130,7 @@ class ChatRequest(BaseModel):
+ class TTSRequest(BaseModel):
+     text: str
+     voice_id: Optional[str] = None
++    rate: Optional[float] = None
+ 
+     @field_validator("text")
+     @classmethod
+@@ -140,6 +142,13 @@ class TTSRequest(BaseModel):
+             raise ValueError(f"text must be {TTS_MAX_TEXT_LENGTH} characters or fewer")
+         return trimmed_text
+ 
++    @field_validator("rate")
++    @classmethod
++    def validate_rate(cls, value):
++        if value is None:
++            return None
++        return min(1.5, max(0.5, float(value)))
++
+     @field_validator("voice_id")
+     @classmethod
+     def validate_voice_id(cls, value):
+@@ -1637,11 +1646,13 @@ def text_to_speech(request: TTSRequest):
+         with NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+             temp_wav_path = Path(temp_wav.name)
+ 
++        rate = request.rate or 1.0
++
+         if voice["engine"] == "espeak":
+             command = [
+                 "espeak-ng",
+                 "-v", str(voice["espeak_voice"]),
+-                "-s", str(voice["speed"]),
++                "-s", str(int(round(voice["speed"] * rate))),
+                 "-p", str(voice["pitch"]),
+                 "-a", str(voice["amplitude"]),
+                 "-w", str(temp_wav_path),
+@@ -1652,6 +1663,9 @@ def text_to_speech(request: TTSRequest):
+                 sys.executable, "-m", "piper",
+                 "-m", str(voice["model_path"]),
+                 "-f", str(temp_wav_path),
++                # cadence: breathe between sentences, scale pace by request rate
++                "--sentence-silence", str(TTS_SENTENCE_SILENCE_SECONDS),
++                "--length-scale", str(round(1.0 / rate, 3)),
+             ]
+ 
+         result = subprocess.run(
+diff --git a/backend/tts_voices.py b/backend/tts_voices.py
+index b00fc04..1e57b8e 100644
+--- a/backend/tts_voices.py
++++ b/backend/tts_voices.py
+@@ -2,84 +2,15 @@ import shutil
+ from pathlib import Path
+ 
+ 
+-TTS_DEFAULT_VOICE_ID = "scrap-clear"
++TTS_DEFAULT_VOICE_ID = "ryan-medium"
+ 
+ ESPEAK_BINARY = "espeak-ng"
+ MBROLA_BINARY = "mbrola"
+ MBROLA_DATA_DIR = Path("/usr/share/mbrola")
+ 
++# Engine support for "espeak" voices remains below; add entries here
++# with engine="espeak" (+ optional mbrola_data) to re-enable them.
+ TTS_VOICES = [
+-    # ── eSpeak NG + MBROLA — smooth diphone synthesis, clear but synthetic ──
+-    {
+-        "id": "scrap-clear",
+-        "name": "SCRAP Clear (robotic)",
+-        "engine": "espeak",
+-        "language": "en-US",
+-        "espeak_voice": "mb-us2",
+-        "mbrola_data": "us2",
+-        "speed": 150,
+-        "pitch": 50,
+-        "amplitude": 100,
+-        "description": "Smooth MBROLA diphone voice. Clear, calm, synthetic. The default.",
+-    },
+-    {
+-        "id": "scrap-clear-2",
+-        "name": "SCRAP Clear II (robotic)",
+-        "engine": "espeak",
+-        "language": "en-US",
+-        "espeak_voice": "mb-us3",
+-        "mbrola_data": "us3",
+-        "speed": 150,
+-        "pitch": 50,
+-        "amplitude": 100,
+-        "description": "Alternate MBROLA male timbre.",
+-    },
+-    {
+-        "id": "scrap-clear-f",
+-        "name": "SCRAP Clear F (robotic)",
+-        "engine": "espeak",
+-        "language": "en-US",
+-        "espeak_voice": "mb-us1",
+-        "mbrola_data": "us1",
+-        "speed": 150,
+-        "pitch": 50,
+-        "amplitude": 100,
+-        "description": "MBROLA female timbre.",
+-    },
+-    # ── eSpeak NG — raw formant synthesis, the harsher retro robot ──
+-    {
+-        "id": "scrap-standard",
+-        "name": "SCRAP Standard (robotic)",
+-        "engine": "espeak",
+-        "language": "en-US",
+-        "espeak_voice": "en-us",
+-        "speed": 160,
+-        "pitch": 46,
+-        "amplitude": 100,
+-        "description": "Classic retro-computer formant voice.",
+-    },
+-    {
+-        "id": "scrap-deep",
+-        "name": "SCRAP Deep (robotic)",
+-        "engine": "espeak",
+-        "language": "en-US",
+-        "espeak_voice": "en-us+m3",
+-        "speed": 148,
+-        "pitch": 24,
+-        "amplitude": 100,
+-        "description": "Slower, lower robot. Sounds like heavy machinery.",
+-    },
+-    {
+-        "id": "scrap-glitch",
+-        "name": "SCRAP Glitch (robotic)",
+-        "engine": "espeak",
+-        "language": "en-US",
+-        "espeak_voice": "en-us+croak",
+-        "speed": 152,
+-        "pitch": 32,
+-        "amplitude": 100,
+-        "description": "Damaged-hardware rasp. Maximum post-apocalypse.",
+-    },
+     # ── Piper — neural, human-sounding (secondary) ──
+     {
+         "id": "lessac-medium",
+diff --git a/frontend/src/App.css b/frontend/src/App.css
+index 61fdfd9..c42e87e 100644
+--- a/frontend/src/App.css
++++ b/frontend/src/App.css
+@@ -665,3 +665,4 @@
+     padding-bottom: 16px;
+   }
+ }
++.group-gap { height: 10px; }
+diff --git a/frontend/src/App.jsx b/frontend/src/App.jsx
+index 5c11958..9b49287 100644
+--- a/frontend/src/App.jsx
++++ b/frontend/src/App.jsx
+@@ -46,6 +46,7 @@ function App() {
+   const [selectedModel, setSelectedModel] = useState('')
+   const [voices, setVoices] = useState([])
+   const [selectedVoiceId, setSelectedVoiceId] = useState('')
++  const [speechRate, setSpeechRate] = useState(0.95)
+   const [knowledgeBases, setKnowledgeBases] = useState(FALLBACK_KNOWLEDGE_BASES)
+   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState('none')
+   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE)
+@@ -556,7 +557,7 @@ function App() {
+     }
+ 
+     try {
+-      const ttsPayload = { text: chatMessage.text }
++      const ttsPayload = { text: chatMessage.text, rate: speechRate }
+       if (selectedVoiceId) {
+         ttsPayload.voice_id = selectedVoiceId
+       }
+@@ -589,11 +590,12 @@ function App() {
+         if (run.cancelled) return
+ 
+         let clipUrl =
+-          laughClipCacheRef.current?.voiceId === selectedVoiceId
++          laughClipCacheRef.current?.voiceId === selectedVoiceId &&
++          laughClipCacheRef.current?.rate === speechRate
+             ? laughClipCacheRef.current.url
+             : null
+         if (!clipUrl) {
+-          const laughPayload = { text: 'Ha ha!' }
++          const laughPayload = { text: 'Ha ha!', rate: speechRate }
+           if (selectedVoiceId) {
+             laughPayload.voice_id = selectedVoiceId
+           }
+@@ -610,7 +612,7 @@ function App() {
+           if (laughClipCacheRef.current?.url) {
+             URL.revokeObjectURL(laughClipCacheRef.current.url)
+           }
+-          laughClipCacheRef.current = { voiceId: selectedVoiceId, url: clipUrl }
++          laughClipCacheRef.current = { voiceId: selectedVoiceId, rate: speechRate, url: clipUrl }
+         }
+         if (run.cancelled) return
+ 
+@@ -863,6 +865,8 @@ function App() {
+         voices={voices}
+         selectedVoiceId={selectedVoiceId}
+         onSelectedVoiceIdChange={setSelectedVoiceId}
++        speechRate={speechRate}
++        onSpeechRateChange={setSpeechRate}
+         knowledgeBases={knowledgeBases}
+         selectedKnowledgeBase={selectedKnowledgeBase}
+         onSelectedKnowledgeBaseChange={setSelectedKnowledgeBase}
+diff --git a/frontend/src/components/SettingsDrawer.jsx b/frontend/src/components/SettingsDrawer.jsx
+index 13296d9..b3a818b 100644
+--- a/frontend/src/components/SettingsDrawer.jsx
++++ b/frontend/src/components/SettingsDrawer.jsx
+@@ -46,6 +46,8 @@ function SettingsDrawer({
+   voices,
+   selectedVoiceId,
+   onSelectedVoiceIdChange,
++  speechRate,
++  onSpeechRateChange,
+   knowledgeBases,
+   selectedKnowledgeBase,
+   onSelectedKnowledgeBaseChange,
+@@ -127,6 +129,16 @@ function SettingsDrawer({
+                 </option>
+               ))}
+             </select>
++            <div className="group-gap" />
++            <Slider
++              label="Speech rate"
++              min={0.8}
++              max={1.2}
++              step={0.05}
++              value={speechRate}
++              format={(v) => `${v.toFixed(2)}\u00d7`}
++              onChange={onSpeechRateChange}
++            />
+           </section>
+ 
+           <section>

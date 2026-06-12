@@ -1,0 +1,63 @@
+diff --git a/backend/tts_voices.py b/backend/tts_voices.py
+index eab45da..119319b 100644
+--- a/backend/tts_voices.py
++++ b/backend/tts_voices.py
+@@ -4,7 +4,7 @@ from pathlib import Path
+ from kokoro_tts import kokoro_available
+ 
+ 
+-TTS_DEFAULT_VOICE_ID = "jessica"
++TTS_DEFAULT_VOICE_ID = "heart"
+ 
+ ESPEAK_BINARY = "espeak-ng"
+ MBROLA_BINARY = "mbrola"
+@@ -15,12 +15,12 @@ MBROLA_DATA_DIR = Path("/usr/share/mbrola")
+ TTS_VOICES = [
+     # ── Kokoro — small neural model, best prosody (primary) ──
+     {
+-        "id": "jessica",
+-        "name": "Jessica (Kokoro)",
++        "id": "heart",
++        "name": "Heart (Kokoro)",
+         "engine": "kokoro",
+         "language": "en-US",
+-        "kokoro_voice": "af_jessica",
+-        "description": "Kokoro neural voice. The default.",
++        "kokoro_voice": "af_heart",
++        "description": "Kokoro's flagship voice. The default.",
+     },
+     {
+         "id": "bella",
+@@ -31,12 +31,28 @@ TTS_VOICES = [
+         "description": "Kokoro neural voice.",
+     },
+     {
+-        "id": "heart",
+-        "name": "Heart (Kokoro)",
++        "id": "jessica",
++        "name": "Jessica (Kokoro)",
+         "engine": "kokoro",
+         "language": "en-US",
+-        "kokoro_voice": "af_heart",
+-        "description": "Kokoro's flagship voice, for comparison.",
++        "kokoro_voice": "af_jessica",
++        "description": "Kokoro neural voice.",
++    },
++    {
++        "id": "sky",
++        "name": "Sky (Kokoro)",
++        "engine": "kokoro",
++        "language": "en-US",
++        "kokoro_voice": "af_sky",
++        "description": "Kokoro neural voice.",
++    },
++    {
++        "id": "nicole",
++        "name": "Nicole (Kokoro)",
++        "engine": "kokoro",
++        "language": "en-US",
++        "kokoro_voice": "af_nicole",
++        "description": "Kokoro neural voice — soft, close-mic whisper style.",
+     },
+     # ── Piper — neural, human-sounding (secondary) ──
+     {

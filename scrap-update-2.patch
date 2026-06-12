@@ -1,0 +1,362 @@
+diff --git a/frontend/src/App.jsx b/frontend/src/App.jsx
+index 5fefb58..5c11958 100644
+--- a/frontend/src/App.jsx
++++ b/frontend/src/App.jsx
+@@ -60,6 +60,7 @@ function App() {
+   const [conversationActive, setConversationActive] = useState(false)
+   const [analyser, setAnalyser] = useState(null)
+   const [replyFace, setReplyFace] = useState(null) // { face, id }
++  const [isLaughing, setIsLaughing] = useState(false)
+   const [lastInteraction, setLastInteraction] = useState(() => Date.now())
+ 
+   const mediaRecorderRef = useRef(null)
+@@ -77,6 +78,8 @@ function App() {
+   const nextChatMessageIdRef = useRef(1)
+   const autoSpokenMessageIdsRef = useRef(new Set())
+   const activeSpeechRef = useRef(null)
++  const laughRunRef = useRef(null)
++  const laughClipCacheRef = useRef(null) // { voiceId, url }
+ 
+   const markInteraction = useCallback(() => setLastInteraction(Date.now()), [])
+ 
+@@ -406,7 +409,7 @@ function App() {
+         const audioContext = new AudioContextCtor()
+         const source = audioContext.createMediaStreamSource(stream)
+         const analyserNode = audioContext.createAnalyser()
+-        analyserNode.fftSize = 64
++        analyserNode.fftSize = 128
+         analyserNode.smoothingTimeConstant = 0.55
+         source.connect(analyserNode)
+         audioContextRef.current = audioContext
+@@ -525,6 +528,15 @@ function App() {
+         }
+       }
+ 
++      // cancel an in-flight laugh
++      if (laughRunRef.current) {
++        laughRunRef.current.cancelled = true
++        laughRunRef.current.audio?.pause()
++        laughRunRef.current.finish?.()
++        laughRunRef.current = null
++      }
++      setIsLaughing(false)
++
+       if (audioUrl) {
+         URL.revokeObjectURL(audioUrl)
+       }
+@@ -564,7 +576,68 @@ function App() {
+       audioUrl = URL.createObjectURL(audioBlob)
+       audio = new Audio(audioUrl)
+ 
+-      const handleNaturalEnd = () => {
++      // Joke contract: a reply tagged :D gets a beat of silence,
++      // a spoken "Ha ha!", and the laughing animation.
++      const playLaughClip = async () => {
++        const run = { cancelled: false, audio: null, finish: null }
++        laughRunRef.current = run
++
++        await new Promise((resolve) => {
++          run.finish = resolve
++          window.setTimeout(resolve, 380)
++        })
++        if (run.cancelled) return
++
++        let clipUrl =
++          laughClipCacheRef.current?.voiceId === selectedVoiceId
++            ? laughClipCacheRef.current.url
++            : null
++        if (!clipUrl) {
++          const laughPayload = { text: 'Ha ha!' }
++          if (selectedVoiceId) {
++            laughPayload.voice_id = selectedVoiceId
++          }
++          const laughResponse = await fetch(`${API_BASE_URL}/tts`, {
++            method: 'POST',
++            headers: { 'Content-Type': 'application/json' },
++            body: JSON.stringify(laughPayload),
++          })
++          if (!laughResponse.ok) {
++            throw new Error('Laugh TTS request failed')
++          }
++          const laughBlob = await laughResponse.blob()
++          clipUrl = URL.createObjectURL(laughBlob)
++          if (laughClipCacheRef.current?.url) {
++            URL.revokeObjectURL(laughClipCacheRef.current.url)
++          }
++          laughClipCacheRef.current = { voiceId: selectedVoiceId, url: clipUrl }
++        }
++        if (run.cancelled) return
++
++        const laughAudio = new Audio(clipUrl)
++        run.audio = laughAudio
++        setIsLaughing(true)
++        await new Promise((resolve) => {
++          run.finish = resolve
++          laughAudio.addEventListener('ended', resolve, { once: true })
++          laughAudio.addEventListener('error', resolve, { once: true })
++          laughAudio.play().catch(resolve)
++        })
++        setIsLaughing(false)
++        if (laughRunRef.current === run) {
++          laughRunRef.current = null
++        }
++      }
++
++      const handleNaturalEnd = async () => {
++        if (chatMessage.face === ':D') {
++          try {
++            await playLaughClip()
++          } catch {
++            setIsLaughing(false)
++            laughRunRef.current = null
++          }
++        }
+         cleanupSpeakMessage()
+         // Conversation loop: when a spoken reply finishes naturally,
+         // go straight back to listening.
+@@ -669,6 +742,23 @@ function App() {
+     setUiMode('chat')
+   }
+ 
++  // clicking any blank area collapses chat back to voice mode
++  const handleShellPointerDown = (event) => {
++    if (uiMode !== 'chat') return
++    if (
++      event.target.closest(
++        'input, button, select, textarea, a, .chat-log, .chat-bar, .drawer-root',
++      )
++    ) {
++      return
++    }
++    markInteraction()
++    setUiMode('voice')
++    if (document.activeElement instanceof HTMLElement) {
++      document.activeElement.blur()
++    }
++  }
++
+   // ── derived ──
+   const status = isRecording
+     ? 'listening'
+@@ -704,7 +794,7 @@ function App() {
+     message.trim().length > 0 && selectedModel.trim().length > 0 && !isSending && !isTranscribing
+ 
+   return (
+-    <div className={`shell shell--${uiMode}`}>
++    <div className={`shell shell--${uiMode}`} onPointerDown={handleShellPointerDown}>
+       <header className="shell-top">
+         <button
+           type="button"
+@@ -730,6 +820,7 @@ function App() {
+           statusDetail={statusDetail}
+           analyser={analyser}
+           replyFace={replyFace}
++          laughing={isLaughing}
+           hasError={Boolean(voiceError)}
+           lastInteraction={lastInteraction}
+           onPress={handleMatrixPress}
+diff --git a/frontend/src/components/MatrixStage.jsx b/frontend/src/components/MatrixStage.jsx
+index 5adf8f8..0d38757 100644
+--- a/frontend/src/components/MatrixStage.jsx
++++ b/frontend/src/components/MatrixStage.jsx
+@@ -1,6 +1,7 @@
+ import { useEffect, useRef, useState } from 'react'
+ import DotMatrix from './matrix/DotMatrix'
+ import MatrixVisualizer from './matrix/MatrixVisualizer'
++import { LAUGH_FRAMES } from './matrix/engine'
+ 
+ const DEFAULT_FACE = ':)'
+ const BOOT_STEP_MS = 1500
+@@ -21,6 +22,7 @@ function MatrixStage({
+   statusDetail = '',
+   analyser = null,
+   replyFace = null, // { face, id }
++  laughing = false,
+   hasError = false,
+   lastInteraction = 0,
+   onPress,
+@@ -33,6 +35,7 @@ function MatrixStage({
+   const [startled, setStartled] = useState(false)
+   const [eyesClosed, setEyesClosed] = useState(false)
+   const [face, setFace] = useState(DEFAULT_FACE)
++  const [laughFrame, setLaughFrame] = useState(0)
+   const prevInteractionRef = useRef(lastInteraction)
+   const startleTimerRef = useRef(null)
+ 
+@@ -126,12 +129,24 @@ function MatrixStage({
+     return () => window.clearTimeout(t)
+   }, [status, face])
+ 
++  // ── laugh frame cycling ──
++  useEffect(() => {
++    if (!laughing) return undefined
++    const id = window.setInterval(() => {
++      setLaughFrame((frame) => (frame + 1) % LAUGH_FRAMES.length)
++    }, 190)
++    return () => window.clearInterval(id)
++  }, [laughing])
++
+   // ── pick what to draw ──
+   let display
+   let statusText = statusDetail
+   if (phase !== 'live') {
+     display = <DotMatrix mode="ticker" value={phase === 'boot-h' ? 'H' : 'I'} cycleMs={BOOT_CYCLE_MS} />
+     statusText = 'booting'
++  } else if (laughing) {
++    display = <DotMatrix mode="face" value={LAUGH_FRAMES[laughFrame]} />
++    statusText = 'ha ha'
+   } else if (status === 'listening') {
+     display = <MatrixVisualizer analyser={analyser} />
+   } else if (status === 'thinking') {
+diff --git a/frontend/src/components/matrix/MatrixVisualizer.jsx b/frontend/src/components/matrix/MatrixVisualizer.jsx
+index a7f6bac..79b2df2 100644
+--- a/frontend/src/components/matrix/MatrixVisualizer.jsx
++++ b/frontend/src/components/matrix/MatrixVisualizer.jsx
+@@ -3,11 +3,24 @@ import './matrix.css'
+ 
+ const COLS = 5
+ const ROWS = 5
++// frequency bands per column (analyser fftSize 128 → 64 bins);
++// skip bin 0 (DC/rumble), widen + boost toward the highs where
++// voice carries less energy — like a real spectrum analyzer
++const BANDS = [
++  [1, 2],
++  [3, 5],
++  [6, 10],
++  [11, 18],
++  [19, 31],
++]
++const GAINS = [0.85, 1.1, 1.45, 1.85, 2.3]
++const PEAK_DECAY = 0.055
++const RELEASE = 0.8
+ 
+ /**
+- * Audio-reactive 5-bar VU on the 5×5 grid.
+- * Reads an AnalyserNode each frame and lights dots bottom-up;
+- * falls back to gentle synthetic motion when no analyser exists.
++ * Audio-reactive EQ on the 5×5 grid — solid bars with a bright
++ * head and a slow-falling peak-hold cap, lit bottom-up per column.
++ * Falls back to gentle synthetic motion when no analyser exists.
+  * Dot opacities are mutated imperatively — no per-frame React renders.
+  */
+ function MatrixVisualizer({
+@@ -19,52 +32,61 @@ function MatrixVisualizer({
+   opPeak = 1,
+ }) {
+   const dotRefs = useRef([])
+-  const levelsRef = useRef([0, 0, 0, 0, 0])
+ 
+   useEffect(() => {
+     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+     let rafId = 0
+     const freqData = analyser ? new Uint8Array(analyser.frequencyBinCount) : null
+-    const levels = levelsRef.current
++    const levels = [0, 0, 0, 0, 0]
++    const peaks = [0, 0, 0, 0, 0]
+ 
+     const paint = () => {
+       for (let c = 0; c < COLS; c++) {
+-        const lit = Math.round(levels[c])
++        const barTop = Math.round(levels[c]) // 0..5 dots lit from the bottom
++        const peakPos = peaks[c] > 0.55 ? Math.min(ROWS, Math.max(1, Math.round(peaks[c]))) : 0
+         for (let r = 0; r < ROWS; r++) {
+           const dot = dotRefs.current[r * COLS + c]
+           if (!dot) continue
+-          // light from the bottom row upward
+-          const on = ROWS - r <= lit
+-          dot.style.opacity = on ? opPeak : opBase
++          const pos = ROWS - r // 1 (bottom) .. 5 (top)
++          let opacity = opBase
++          if (pos <= barTop) {
++            opacity = pos === barTop ? opPeak : opPeak * 0.5 // bright head, solid body
++          } else if (pos === peakPos) {
++            opacity = opPeak * 0.9 // falling peak cap
++          }
++          dot.style.opacity = opacity
+         }
+       }
+     }
+ 
+     if (reduceMotion) {
+-      // static mid-level bars
+-      levels.fill(2)
+-      levels[2] = 3
++      levels[0] = 2
++      levels[1] = 3
++      levels[2] = 4
++      levels[3] = 3
++      levels[4] = 2
+       paint()
+       return undefined
+     }
+ 
+     const tick = (now) => {
+-      if (analyser && freqData) {
+-        analyser.getByteFrequencyData(freqData)
+-        // voice energy lives in the low bins — 4 bins per column
+-        for (let c = 0; c < COLS; c++) {
++      for (let c = 0; c < COLS; c++) {
++        let target
++        if (analyser && freqData) {
++          analyser.getByteFrequencyData(freqData)
++          const [from, to] = BANDS[c]
+           let sum = 0
+-          for (let k = 0; k < 4; k++) sum += freqData[c * 4 + k]
+-          const raw = Math.min(1, (sum / 4 / 255) * 1.9)
+-          const target = Math.pow(raw, 0.75) * ROWS
+-          // fast attack, slow release
+-          levels[c] = target > levels[c] ? target : levels[c] * 0.82
+-        }
+-      } else {
+-        // synthetic fallback — slow independent column drift
+-        for (let c = 0; c < COLS; c++) {
+-          levels[c] = 1.6 + 1.6 * Math.abs(Math.sin(now / (430 + c * 117) + c))
++          for (let k = from; k <= to; k++) sum += freqData[k]
++          const raw = Math.min(1, (sum / (to - from + 1) / 255) * GAINS[c] * 1.5)
++          target = Math.pow(raw, 0.72) * ROWS
++        } else {
++          // synthetic fallback — slow independent column drift
++          target = 1.4 + 1.8 * Math.abs(Math.sin(now / (430 + c * 117) + c * 1.7))
+         }
++        // fast attack, slow release
++        levels[c] = target > levels[c] ? levels[c] + (target - levels[c]) * 0.72 : levels[c] * RELEASE
++        // peak cap falls slowly, snaps up with the bar
++        peaks[c] = Math.max(levels[c], peaks[c] - PEAK_DECAY)
+       }
+       paint()
+       rafId = window.requestAnimationFrame(tick)
+diff --git a/frontend/src/components/matrix/engine.js b/frontend/src/components/matrix/engine.js
+index cb12535..ec73a7a 100644
+--- a/frontend/src/components/matrix/engine.js
++++ b/frontend/src/components/matrix/engine.js
+@@ -59,10 +59,17 @@ export const GLYPHS = {
+ 
+ // ── Bitmap → dot data ───────────────────────────────────────
+ export function faceDots(face) {
+-  const bm = (FACES[face] || FACES[':)']).replace(/\|/g, '')
++  const source = face && face.includes('|') ? face : FACES[face] || FACES[':)']
++  const bm = source.replace(/\|/g, '')
+   return [...bm].map((ch) => ({ active: ch !== '.', role: ch }))
+ }
+ 
++// laugh cycle — :) bouncing up into a raised :D (two frames)
++export const LAUGH_FRAMES = [
++  '.....|.e.e.|.....|m...m|.mmm.',
++  '.e.e.|mmmmm|m...m|.mmm.|.....',
++]
++
+ export function glyphDots(glyph) {
+   const bm = (GLYPHS[glyph] || GLYPHS['?']).replace(/\|/g, '')
+   return [...bm].map((ch) => ({ active: ch !== '.', role: 'x' }))
+diff --git a/frontend/src/identity.js b/frontend/src/identity.js
+index c0c0924..f05dc91 100644
+--- a/frontend/src/identity.js
++++ b/frontend/src/identity.js
+@@ -1,5 +1,5 @@
+ // ── Assistant identity ──────────────────────────────────────
+ // Rename the assistant here; everything else follows.
+ export const ASSISTANT_NAME = 'SCRAP'
+-export const ASSISTANT_EXPANSION = 'Sarcastic Conversational Retro-Apocalyptic Processor'
+-export const ASSISTANT_TAGLINE = 'salvaged · offline · unimpressed'
++export const ASSISTANT_EXPANSION = 'Salvaged Conversational Retro-Apocalyptic Processor'
++export const ASSISTANT_TAGLINE = 'rebuilt · offline · unimpressed'

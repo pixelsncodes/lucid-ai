@@ -1,0 +1,201 @@
+diff --git a/backend/kokoro_tts.py b/backend/kokoro_tts.py
+new file mode 100644
+index 0000000..3d683f6
+--- /dev/null
++++ b/backend/kokoro_tts.py
+@@ -0,0 +1,65 @@
++import io
++import wave
++from pathlib import Path
++from threading import Lock
++
++import numpy as np
++
++KOKORO_MODEL_RELATIVE_PATH = "models/kokoro/kokoro-v1.0.onnx"
++KOKORO_VOICES_RELATIVE_PATH = "models/kokoro/voices-v1.0.bin"
++
++_kokoro_instance = None
++_kokoro_lock = Lock()
++
++
++def kokoro_model_paths(base_dir: Path) -> tuple[Path, Path]:
++    return (
++        base_dir / KOKORO_MODEL_RELATIVE_PATH,
++        base_dir / KOKORO_VOICES_RELATIVE_PATH,
++    )
++
++
++def kokoro_importable() -> bool:
++    try:
++        import kokoro_onnx  # noqa: F401
++    except Exception:
++        return False
++    return True
++
++
++def kokoro_available(base_dir: Path) -> bool:
++    model_path, voices_path = kokoro_model_paths(base_dir)
++    return kokoro_importable() and model_path.is_file() and voices_path.is_file()
++
++
++def _get_kokoro(base_dir: Path):
++    """Lazy-loaded singleton — the model stays warm between requests."""
++    global _kokoro_instance
++    if _kokoro_instance is None:
++        with _kokoro_lock:
++            if _kokoro_instance is None:
++                from kokoro_onnx import Kokoro
++
++                model_path, voices_path = kokoro_model_paths(base_dir)
++                _kokoro_instance = Kokoro(str(model_path), str(voices_path))
++    return _kokoro_instance
++
++
++def synthesize_wav_bytes(
++    base_dir: Path,
++    text: str,
++    voice: str,
++    speed: float = 1.0,
++) -> bytes:
++    kokoro = _get_kokoro(base_dir)
++    samples, sample_rate = kokoro.create(text, voice=voice, speed=speed, lang="en-us")
++    samples = np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
++    pcm = (samples * 32767.0).astype(np.int16)
++
++    buffer = io.BytesIO()
++    with wave.open(buffer, "wb") as wav_file:
++        wav_file.setnchannels(1)
++        wav_file.setsampwidth(2)
++        wav_file.setframerate(sample_rate)
++        wav_file.writeframes(pcm.tobytes())
++    return buffer.getvalue()
+diff --git a/backend/main.py b/backend/main.py
+index 1ba0eea..72f8d74 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -38,6 +38,7 @@ from config import (
+     TTS_MAX_TEXT_LENGTH,
+     TTS_SENTENCE_SILENCE_SECONDS,
+ )
++from kokoro_tts import synthesize_wav_bytes as kokoro_synthesize_wav_bytes
+ from tts_voices import public_voice_payload, resolve_voice
+ 
+ app = FastAPI(title="LUCID Backend")
+@@ -1641,6 +1642,26 @@ def text_to_speech(request: TTSRequest):
+     if voice is None:
+         raise HTTPException(status_code=500, detail="Default TTS voice is unavailable.")
+ 
++    # ── Kokoro: in-process synthesis, model stays warm ──
++    if voice["engine"] == "kokoro":
++        rate = request.rate or 1.0
++        try:
++            wav_bytes = kokoro_synthesize_wav_bytes(
++                BASE_DIR,
++                request.text,
++                voice["kokoro_voice"],
++                speed=rate,
++            )
++        except Exception as error:
++            raise HTTPException(
++                status_code=500,
++                detail=f"TTS generation failed for voice {voice['id']}: {error}",
++            )
++        headers = {"X-LUCID-TTS-Voice-Id": voice["id"]}
++        if fallback_used:
++            headers["X-LUCID-TTS-Fallback"] = "true"
++        return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
++
+     temp_wav_path = None
+     try:
+         with NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index 92ea577..bf3ca32 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -63,3 +63,4 @@ uvicorn==0.49.0
+ uvloop==0.22.1
+ watchfiles==1.2.0
+ websockets==16.0
++kokoro-onnx
+diff --git a/backend/tts_voices.py b/backend/tts_voices.py
+index 1e57b8e..119319b 100644
+--- a/backend/tts_voices.py
++++ b/backend/tts_voices.py
+@@ -1,8 +1,10 @@
+ import shutil
+ from pathlib import Path
+ 
++from kokoro_tts import kokoro_available
+ 
+-TTS_DEFAULT_VOICE_ID = "ryan-medium"
++
++TTS_DEFAULT_VOICE_ID = "heart"
+ 
+ ESPEAK_BINARY = "espeak-ng"
+ MBROLA_BINARY = "mbrola"
+@@ -11,6 +13,47 @@ MBROLA_DATA_DIR = Path("/usr/share/mbrola")
+ # Engine support for "espeak" voices remains below; add entries here
+ # with engine="espeak" (+ optional mbrola_data) to re-enable them.
+ TTS_VOICES = [
++    # ── Kokoro — small neural model, best prosody (primary) ──
++    {
++        "id": "heart",
++        "name": "Heart (Kokoro)",
++        "engine": "kokoro",
++        "language": "en-US",
++        "kokoro_voice": "af_heart",
++        "description": "Kokoro's flagship voice. The default.",
++    },
++    {
++        "id": "bella",
++        "name": "Bella (Kokoro)",
++        "engine": "kokoro",
++        "language": "en-US",
++        "kokoro_voice": "af_bella",
++        "description": "Kokoro neural voice.",
++    },
++    {
++        "id": "jessica",
++        "name": "Jessica (Kokoro)",
++        "engine": "kokoro",
++        "language": "en-US",
++        "kokoro_voice": "af_jessica",
++        "description": "Kokoro neural voice.",
++    },
++    {
++        "id": "sky",
++        "name": "Sky (Kokoro)",
++        "engine": "kokoro",
++        "language": "en-US",
++        "kokoro_voice": "af_sky",
++        "description": "Kokoro neural voice.",
++    },
++    {
++        "id": "nicole",
++        "name": "Nicole (Kokoro)",
++        "engine": "kokoro",
++        "language": "en-US",
++        "kokoro_voice": "af_nicole",
++        "description": "Kokoro neural voice — soft, close-mic whisper style.",
++    },
+     # ── Piper — neural, human-sounding (secondary) ──
+     {
+         "id": "lessac-medium",
+@@ -79,6 +122,8 @@ def _mbrola_voice_available(data_name: str) -> bool:
+ 
+ 
+ def is_voice_available(voice: dict, base_dir: Path) -> bool:
++    if voice["engine"] == "kokoro":
++        return kokoro_available(base_dir)
+     if voice["engine"] == "espeak":
+         if not espeak_available():
+             return False
+@@ -106,7 +151,7 @@ def get_default_voice() -> dict | None:
+ 
+ 
+ def _materialize(voice: dict, base_dir: Path) -> dict:
+-    if voice["engine"] == "espeak":
++    if voice["engine"] in ("espeak", "kokoro"):
+         return dict(voice)
+     return {**voice, **_voice_paths(voice, base_dir)}
+ 
