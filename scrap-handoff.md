@@ -74,8 +74,30 @@ Root causes were in FTS5 query construction (filler-word stopwords), plural/suff
 3. RERANKER_ENABLED=False bypass — monkeypatching disables the pass; all debug candidates have reranker_score=None.
 4. `/debug/retrieval` endpoint shape — verifies all required JSON keys are present.
 
+### WW2 vocabulary gap — synonym expansion (June 12)
+
+**Root cause fixed**: FTS5 dead-term "ww2" / "wwii" — Wikipedia uses "World War II". Added `QUERY_SYNONYMS` dict in `backend/wiki_store.py` (just above `FTS_STOP_WORDS`).
+
+**How it works** (`query_terms()` in `wiki_store.py`): when an abbreviation from `QUERY_SYNONYMS` is encountered, its expanded tokens are inserted *before* the abbreviation in the terms list. The AND ladder then drops the unrecognised abbreviation last and falls through to the spelled-out tokens (e.g. "France leader WW2" → terms `['france', 'leader', 'world', 'war', 'ii', 'ww2']`; ladder level 2 drops `ww2` and queries `france AND leader AND world AND war AND ii` → "France during World War II" article retrieved).
+
+**Expansion is additive, never replacing**: the original abbreviation stays in the list so it matches any source that does use the abbreviated form.
+
+**Table** (`QUERY_SYNONYMS`):
+- `ww2` / `wwii` → `["world", "war", "ii"]`
+- `ww1` / `wwi` → `["world", "war"]`
+
+**New tests** (`backend/test_retrieval_regression.py`, +8 → now 35 total):
+1. `test_query_synonyms_table_exists` — core keys and expected tokens present in `QUERY_SYNONYMS`
+2. `test_query_terms_ww2_expands_and_keeps_abbreviation` — "ww2" in output AND world/war/ii also added
+3. `test_query_terms_wwii_expands_and_keeps_abbreviation` — same for "wwii"
+4. `test_query_terms_ww1_expands_and_keeps_abbreviation` — "ww1" keeps original, adds world/war
+5. `test_query_terms_expansion_order_abbreviation_last` — expanded tokens appear before abbreviation
+6. `test_query_terms_no_expansion_for_spelled_out_query` — non-abbreviated queries unchanged
+7. `test_ww2_abbreviation_finds_world_war_ii_article` — integration: "France leader WW2" surfaces WW2 France article
+8. `test_spelled_out_ww2_query_finds_same_article` — control: "France leader world war ii" still works
+
 ## Test suites — must stay green
-**119 pytest** (9 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 27, `test_stt_vad_filter` 1, `test_reranker` 4) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
+**127 pytest** (9 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 35, `test_stt_vad_filter` 1, `test_reranker` 4) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
 
 Note: smoke tests emit fiction-guard probes (e.g. "What is the capital of Atlantis?") into the uvicorn log — that's expected test traffic.
 
@@ -98,34 +120,9 @@ Standalone sandbox at `/arcade` route. Not yet wired into the main SCRAP chat UI
 
 1. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, etc.) to SCRAP's personality responses.
 2. **Backlog**:
-   - WW2 vocabulary gap — see diagnosis below. Fix path identified; not yet implemented.
    - Chunk-1 ranking: chunk-0 injection helps identity queries, but second-chunk answers (e.g. biographical details in the second paragraph) can still rank poorly — may need a soft positional prior.
    - PDF document mode: load a user-supplied PDF as a session-scoped knowledge base (in addition to or instead of the always-on wiki KBs).
-
-## WW2 gap diagnosis (stretch, June 12)
-
-Investigated via `/debug/retrieval` for "France leader WW2" and variants.
-
-**Root cause: FTS5 vocabulary mismatch — "ww2" not in the enwiki index.**
-
-Wikipedia uses "World War II" (spelled out), not "ww2". The FTS5 token "ww2" matches almost nothing in the 33M-chunk enwiki index. The top FTS5 hits for "france leader ww2" are completely irrelevant articles (e.g. "Atme", a Syrian village) that happen to co-occur the individual terms.
-
-**Detailed trace** for "France leader WW2" (terms: ['france', 'leader', 'ww2']):
-- 'ww2' → no redirect, no article with "ww2" in title → effectively a dead query term
-- Remaining 2-term AND query ('france' AND 'leader') returns articles like "Liberation of France" chunk 12 (reranker=0.14), "Congress of Vienna" chunk 1 (reranker=0.07) — all scored low by the cross-encoder, none answers the question
-- Final outcome: retrieved (3 chunks pass the filter) but LLM sees no useful context → returns "unknown"
-
-**What works:**
-- "de gaulle france WW2" → terms include 'de gaulle' → entity match → Charles de Gaulle article surfaces correctly
-- "who was the leader of france during world war 2" → terms include 'world', 'war' → "France during World War II" article retrieved (reranker=0.998)
-- "vichy france leader" → Vichy France article retrieved
-
-**Fix path (not yet implemented):**
-1. **Query expansion in `query_terms` or `fts_term_variants`**: map "ww2" / "wwii" → ["world war ii", "world war 2", "wwii"] OR add as synonym to fts_term_variants. This is the smallest targeted fix.
-2. Alternatively, add era-specific synonym pairs to a lookup dict in `wiki_store.py` (e.g. `{"ww2": "world war", "wwii": "world war", "ww1": "world war"}`).
-3. The "who was France's leader" ambiguity (De Gaulle = Free France; Pétain = Vichy) is a separate problem that would require the LLM to disambiguate from context — not a retrieval fix.
-
-**Scope note:** "France's leader WW2" is the symptom; the root is that any abbreviation-vs-spelled-out mismatch will fail similarly (e.g. "USA president" vs "United States president" would have a similar gap if articles only used one form).
+   - Abbreviation coverage: `QUERY_SYNONYMS` in `wiki_store.py` is seeded with ww1/ww2/wwi/wwii — extend conservatively as new dead-term gaps are diagnosed.
 
 ## Hard constraints
 - The **fiction guard** must survive all retrieval changes: "Atlantis capital" must still return "unknown" for the fictional/DC-ambiguous case. The guard logic is in `main.py`; the 14 tests in `test_fiction_guard.py` are the regression suite.

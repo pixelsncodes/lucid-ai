@@ -18,6 +18,7 @@ import pytest
 
 from wiki_store import (
     CHUNK_INTRO_BONUS,
+    QUERY_SYNONYMS,
     fts_term_variants,
     is_identity_query,
     query_terms,
@@ -712,4 +713,134 @@ def test_fiction_guard_atlantis_dc_by_title(tmp_path):
     )
     assert not is_fictional_source("Atlantis"), (
         "bare 'Atlantis' title without paren should not be auto-flagged as fictional"
+    )
+
+
+# ---------------------------------------------------------------------------
+# WW2 vocabulary gap — synonym expansion for military abbreviations
+# ---------------------------------------------------------------------------
+
+
+def test_query_synonyms_table_exists():
+    """QUERY_SYNONYMS must contain the core WW2/WW1 abbreviation entries."""
+    for key in ("ww2", "wwii", "ww1", "wwi"):
+        assert key in QUERY_SYNONYMS, f"QUERY_SYNONYMS missing key '{key}'"
+    assert "world" in QUERY_SYNONYMS["ww2"]
+    assert "war" in QUERY_SYNONYMS["ww2"]
+    assert "world" in QUERY_SYNONYMS["wwii"]
+    assert "war" in QUERY_SYNONYMS["wwii"]
+
+
+def test_query_terms_ww2_expands_and_keeps_abbreviation():
+    """'ww2' expands to world/war/ii while keeping 'ww2' in the term list."""
+    terms = query_terms("France leader WW2")
+    assert "ww2" in terms, "original abbreviation must be preserved"
+    assert "world" in terms, "expansion must add 'world'"
+    assert "war" in terms, "expansion must add 'war'"
+    assert "ii" in terms, "expansion must add 'ii'"
+
+
+def test_query_terms_wwii_expands_and_keeps_abbreviation():
+    """'wwii' expands to world/war/ii while keeping 'wwii'."""
+    terms = query_terms("France leader WWII")
+    assert "wwii" in terms
+    assert "world" in terms
+    assert "war" in terms
+    assert "ii" in terms
+
+
+def test_query_terms_ww1_expands_and_keeps_abbreviation():
+    """'ww1' expands to world/war while keeping 'ww1'."""
+    terms = query_terms("Leaders WW1")
+    assert "ww1" in terms
+    assert "world" in terms
+    assert "war" in terms
+
+
+def test_query_terms_expansion_order_abbreviation_last():
+    """Expanded tokens appear before the abbreviation so the ladder drops the
+    abbreviation (dead FTS term) first and falls through to world/war/ii."""
+    terms = query_terms("France leader WW2")
+    ww2_pos = terms.index("ww2")
+    world_pos = terms.index("world")
+    war_pos = terms.index("war")
+    assert world_pos < ww2_pos, "'world' must appear before 'ww2' in terms list"
+    assert war_pos < ww2_pos, "'war' must appear before 'ww2' in terms list"
+
+
+def test_query_terms_no_expansion_for_spelled_out_query():
+    """A non-abbreviated query is not altered by synonym expansion."""
+    terms = query_terms("france world war ii leader")
+    assert "ww2" not in terms
+    assert "wwii" not in terms
+    assert "ww1" not in terms
+
+
+def test_ww2_abbreviation_finds_world_war_ii_article(tmp_path):
+    """'France leader WW2' must surface a World War II France article.
+
+    Root cause: FTS5 token 'ww2' matches nothing in enwiki (Wikipedia spells
+    it out as 'World War II'). Synonym expansion inserts world/war/ii before
+    'ww2' so the ladder drops 'ww2' and retrieves via the expanded tokens.
+    """
+    db = tmp_path / "ww2_france.sqlite3"
+    _make_meta_db(
+        db,
+        [
+            (
+                "france-during-world-war-ii",
+                "France during World War II",
+                3000,
+                [
+                    "France during World War II was divided into German-occupied zones and Vichy France.",
+                    "The leader of Free France during World War II was Charles de Gaulle, "
+                    "who directed the French Resistance from London.",
+                    "Philippe Pétain led Vichy France during World War II as head of state.",
+                ],
+                [
+                    ("france during world war ii", "france-during-world-war-ii"),
+                    ("france world war ii", "france-during-world-war-ii"),
+                ],
+            ),
+            (
+                "france-geography",
+                "France",
+                50000,
+                [
+                    "France is a country in Western Europe with Paris as its capital city.",
+                    "The leader of France is the President of the French Republic.",
+                ],
+                [("france", "france-geography")],
+            ),
+        ],
+    )
+    results = search_index("France leader WW2", limit=3, index_path=db)
+    ids = [r["id"] for r in results]
+    assert "france-during-world-war-ii" in ids, (
+        f"synonym expansion should surface WW2 France article; got {ids}"
+    )
+
+
+def test_spelled_out_ww2_query_finds_same_article(tmp_path):
+    """'France leader world war ii' (control: no abbreviation) still works correctly."""
+    db = tmp_path / "ww2_france_control.sqlite3"
+    _make_meta_db(
+        db,
+        [
+            (
+                "france-during-world-war-ii",
+                "France during World War II",
+                3000,
+                [
+                    "France during World War II was divided between German-occupied territory and Vichy France.",
+                    "The leader of Free France during World War II was Charles de Gaulle.",
+                ],
+                [("france during world war ii", "france-during-world-war-ii")],
+            ),
+        ],
+    )
+    results = search_index("France leader world war ii", limit=3, index_path=db)
+    ids = [r["id"] for r in results]
+    assert "france-during-world-war-ii" in ids, (
+        f"spelled-out query should find WW2 France article unchanged; got {ids}"
     )

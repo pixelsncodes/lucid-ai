@@ -25,6 +25,17 @@ W_ENTITY = 12.0
 # without overriding topic-specific queries where mid-article chunks are better.
 CHUNK_INTRO_BONUS = 15.0
 
+# Abbreviation → list of spelled-out tokens to add alongside the abbreviation.
+# The abbreviation itself is never removed (expansion adds variants, never replaces).
+# Positioned before the abbreviation in the terms list so the AND ladder naturally
+# drops the unrecognised abbreviation last and falls through to the expanded tokens.
+QUERY_SYNONYMS: dict[str, list[str]] = {
+    "ww2":  ["world", "war", "ii"],
+    "wwii": ["world", "war", "ii"],
+    "ww1":  ["world", "war"],
+    "wwi":  ["world", "war"],
+}
+
 FTS_STOP_WORDS = {
     "a",
     "an",
@@ -306,6 +317,12 @@ def query_terms(query: str) -> list[str]:
             continue
         if term in ("birth", "birthdate", "birthday"):
             term = "born"
+        # Synonym expansion: insert spelled-out tokens before the abbreviation so
+        # the ladder drops the unrecognised abbreviation last and falls through to
+        # the expanded tokens (e.g. "ww2" → world/war/ii inserted ahead of "ww2").
+        for expanded in QUERY_SYNONYMS.get(term, []):
+            if len(expanded) > 1 and expanded not in FTS_STOP_WORDS and expanded not in normalized_terms:
+                normalized_terms.append(expanded)
         if term not in normalized_terms:
             normalized_terms.append(term)
     return normalized_terms
