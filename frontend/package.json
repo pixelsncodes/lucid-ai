@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "test": "vitest run",
     "postinstall": "mkdir -p public/vad && cp node_modules/@ricky0123/vad-web/dist/vad.worklet.bundle.min.js public/vad/ && cp node_modules/@ricky0123/vad-web/dist/silero_vad_legacy.onnx public/vad/ && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm public/vad/ && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm public/vad/"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "vitest": "^4.1.8"
   }
 }
