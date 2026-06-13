@@ -2,61 +2,110 @@ import { useEffect, useRef, useState } from 'react'
 import './ArcadeSandbox.css'
 import GameGrid from './GameGrid'
 import { createConsole } from './gameConsole'
-import { createPong } from './games/pong'
+import { createPong }     from './games/pong'
+import { createSnake }    from './games/snake'
+import { createBreakout } from './games/breakout'
+import { createInvaders } from './games/invaders'
+import { createTetris }   from './games/tetris'
+import { createFrogger }  from './games/frogger'
 
 const MAX_EVENTS = 24
 
-export default function ArcadeSandbox() {
-  const gridRef  = useRef(null)   // GameGrid imperative handle
-  const arenaRef = useRef(null)   // DOM wrapper for coordinate math
-  const gameRef  = useRef(null)   // live game instance
+const GAME_FACTORIES = [
+  createPong,
+  createSnake,
+  createBreakout,
+  createInvaders,
+  createTetris,
+  createFrogger,
+]
 
-  const [events,  setEvents]  = useState([])
+const GAME_HELP = {
+  pong:     'mouse or ↑↓ paddle · Esc pause · first to 5 · Space restart',
+  snake:    '↑↓←→ steer · Space start/restart · Esc quit',
+  breakout: '←→ paddle · mouse↕ = paddle x · Space restart',
+  invaders: '←→ move · Space fire · Esc pause',
+  tetris:   '←→ move · ↑ rotate · ↓ soft drop · Space hard drop · Esc pause',
+  frogger:  '↑↓←→ hop · Space restart',
+}
+
+export default function ArcadeSandbox() {
+  const gridRef     = useRef(null)
+  const arenaRef    = useRef(null)
+  const consRef     = useRef(null)     // current GameConsole
+  const gameRef     = useRef(null)     // current game object (for input forwarding)
+  const idxRef      = useRef(0)
+  const launchRef   = useRef(null)     // stable pointer to launchGame for effect closures
+
+  const [events,   setEvents]   = useState([])
   const [gameMeta, setGameMeta] = useState(null)
 
-  useEffect(() => {
-    const game = createPong()
+  function launchGame(idx) {
+    consRef.current?.destroy()
+    setEvents([])
+
+    const n = ((idx % GAME_FACTORIES.length) + GAME_FACTORIES.length) % GAME_FACTORIES.length
+    idxRef.current = n
+
+    const game = GAME_FACTORIES[n]()
     gameRef.current = game
     setGameMeta(game.meta)
 
     const cons = createConsole(game, {
-      onDraw(dots) {
-        gridRef.current?.setDots(dots)
-      },
-      onEvent(e) {
-        setEvents(prev => [e, ...prev].slice(0, MAX_EVENTS))
-      },
+      onDraw(dots) { gridRef.current?.setDots(dots) },
+      onEvent(e)   { setEvents(prev => [e, ...prev].slice(0, MAX_EVENTS)) },
     })
+    consRef.current = cons
+    cons.start()
+  }
 
-    // ── Input wiring ────────────────────────────────────────────────────────
+  // Keep stable ref so the event handlers added in useEffect can always
+  // call the latest version of launchGame (which closes over React state setters).
+  launchRef.current = launchGame
+
+  useEffect(() => {
+    launchRef.current(0)
 
     function toRow(clientY) {
       if (!arenaRef.current) return null
       const rect = arenaRef.current.getBoundingClientRect()
       const frac = (clientY - rect.top) / rect.height
-      return frac * game.meta.gridSize.rows
+      const rows = gameRef.current?.meta?.gridSize?.rows ?? 14
+      return frac * rows
     }
 
     function onKey(e) {
-      if (['ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault()
-      game.input({ type: e.type, key: e.key })
+      const prevent = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ']
+      if (prevent.includes(e.key)) e.preventDefault()
+
+      if (e.type === 'keydown' && e.key === 'Tab') {
+        e.preventDefault()
+        launchRef.current(idxRef.current + (e.shiftKey ? -1 : 1))
+        return
+      }
+
+      if (e.type === 'keydown' && /^[1-6]$/.test(e.key)) {
+        launchRef.current(parseInt(e.key) - 1)
+        return
+      }
+
+      gameRef.current?.input({ type: e.type, key: e.key })
     }
 
     function onMouseMove(e) {
       const row = toRow(e.clientY)
-      if (row !== null) game.input({ type: 'mouse_y', row })
+      if (row !== null) gameRef.current?.input({ type: 'mouse_y', row })
     }
 
     function onMouseLeave() {
-      // Stop mouse tracking when cursor leaves arena; arrow keys take over
-      game.input({ type: 'mouse_y', row: null })
+      gameRef.current?.input({ type: 'mouse_y', row: null })
     }
 
     function onTouch(e) {
       const touch = e.touches[0] || e.changedTouches[0]
       if (!touch) return
       const row = toRow(touch.clientY)
-      if (row !== null) game.input({ type: 'touch_y', row })
+      if (row !== null) gameRef.current?.input({ type: 'touch_y', row })
     }
 
     const arena = arenaRef.current
@@ -67,8 +116,6 @@ export default function ArcadeSandbox() {
     arena?.addEventListener('touchstart', onTouch, { passive: true })
     arena?.addEventListener('touchmove',  onTouch, { passive: true })
 
-    cons.start()
-
     return () => {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('keyup',   onKey)
@@ -76,12 +123,13 @@ export default function ArcadeSandbox() {
       arena?.removeEventListener('mouseleave', onMouseLeave)
       arena?.removeEventListener('touchstart', onTouch)
       arena?.removeEventListener('touchmove',  onTouch)
-      cons.destroy()
-      gameRef.current = null
+      consRef.current?.destroy()
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const { cols = 24, rows = 14 } = gameMeta?.gridSize ?? {}
+  const help = GAME_HELP[gameMeta?.id] ?? ''
 
   return (
     <div className="arcade-sandbox">
@@ -120,10 +168,8 @@ export default function ArcadeSandbox() {
       </div>
 
       <footer className="sandbox-footer">
-        <kbd>mouse</kbd> or <kbd>↑↓</kbd> move paddle &nbsp;·&nbsp;
-        <kbd>Esc</kbd> pause &nbsp;·&nbsp;
-        first to 5 wins &nbsp;·&nbsp;
-        <kbd>Esc</kbd> or <kbd>Space</kbd> restart after win
+        {help && <span>{help} &nbsp;·&nbsp; </span>}
+        <kbd>Tab</kbd> next game &nbsp;·&nbsp; <kbd>1</kbd>–<kbd>6</kbd> select
       </footer>
     </div>
   )

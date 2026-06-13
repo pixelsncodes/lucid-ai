@@ -99,9 +99,11 @@ Root causes were in FTS5 query construction (filler-word stopwords), plural/suff
 ## Test suites — must stay green
 **127 pytest** (9 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 35, `test_stt_vad_filter` 1, `test_reranker` 4) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
 
+**46 vitest** (5 test files: snake 9, breakout 10, invaders 9, tetris 8, frogger 9, pong 1) run headless with `npm test` from `frontend/`. Added in this session.
+
 Note: smoke tests emit fiction-guard probes (e.g. "What is the capital of Atlantis?") into the uvicorn log — that's expected test traffic.
 
-## Arcade track — IN PROGRESS, integration pending
+## Arcade track — COMPLETE, integration pending
 
 Standalone sandbox at `/arcade` route. Not yet wired into the main SCRAP chat UI.
 
@@ -109,16 +111,26 @@ Standalone sandbox at `/arcade` route. Not yet wired into the main SCRAP chat UI
 - `GameGrid.jsx` — NxM dot-matrix canvas component. Imperative rendering: parent calls `ref.setDots(flat Uint8Array)` each frame to avoid 60fps React re-renders. Dot states: `0=OFF`, `1=DIM`, `2=LIT`. Uses the same visual constants as the face matrix (DOT_COLOR, DOT_SIZE 22px, DOT_GAP 14px).
 - `gameConsole.js` — factory + **game-console contract**. Every game must implement `{ meta, init(api), input(event), tick(dt), destroy() }`. `GameAPI`: `setDot(col, row, state)`, `clearGrid()`, `emit(name, data)`. Semantic events games must emit: `game_start`, `scrap_scored`, `player_scored`, `near_miss`, `scrap_won`, `scrap_lost`, `game_quit`. Fixed timestep: 60fps / ~16.67ms tick.
 - `constants.js` — shared visual constants (`DOT_COLOR`, `DOT_SIZE`, `DOT_GAP`, `OP_OFF/DIM/LIT`, flat-buffer `OFF/DIM/LIT` state values).
-- `ArcadeSandbox.jsx` / `ArcadeSandbox.css` — standalone `/arcade` route, wires console to GameGrid, handles keyboard + mouse_y + touch_y input.
-- `games/pong.js` — **first game, implemented**. 24×14 grid, AI opponent (SCRAP), score pips, countdown, ball speed progression.
+- `ArcadeSandbox.jsx` / `ArcadeSandbox.css` — standalone `/arcade` route. All 6 games wired in. Tab cycles forward, Shift+Tab cycles back, keys 1–6 jump directly. ArrowLeft/ArrowRight added to the `preventDefault` list (needed for Breakout, Invaders, Tetris). Per-game help text shown in footer.
+- `games/pong.js` — Game 1. 24×14 grid, AI opponent (SCRAP), score pips, countdown, ball speed progression.
+- `games/snake.js` — Game 2. 24×14 grid, wall/self-collision = `scrap_won`, food = `player_scored`, 180° reversal blocked.
+- `games/breakout.js` — Game 3. 24×16 grid, 3 lives, 5 brick rows. Ball speed bumps on each brick. `near_miss` on paddle-edge hits, `scrap_won` on last life, `scrap_lost` on all bricks cleared. Mouse↕ remapped to horizontal paddle position.
+- `games/invaders.js` — Game 4. 24×16 grid, 5×3 army. Invasion check fires on every army step (not only on edge drops). `near_miss` on each non-final life lost, `scrap_won` on invasion or last life, `scrap_lost` on all kills.
+- `games/tetris.js` — Game 5. 10×20 grid. 7 tetrominoes, 4-rotation wall-kick, hard drop, soft drop, line scoring (classic Tetris scale × level). `player_scored` per line clear, `scrap_won` on board full.
+- `games/frogger.js` — Game 6. 16×13 grid. **Fifth-game choice**: Frogger suits the coarse dot-matrix well because its core elements (frog, logs, cars) each occupy 1–2 dots and the traffic/river pattern reads clearly even at low resolution. Logs drift continuously (frog rides them as a float offset), cars are integer-collision. 5 lily-pad goal strip. `player_scored` per pad, `scrap_lost` when all 5 filled, `scrap_won` on last life, `near_miss` on non-final life loss.
 
-**Remaining:** 5 more games (Snake, Tetris, Breakout, Space Invaders, and one TBD). Each follows the game-console contract.
+**Test counts (frontend vitest):** 46 tests across 5 test files (9 snake, 10 breakout, 9 invaders, 8 tetris, 9 frogger, 1 pong legacy). All pass headless with mock GameAPI (`environment: 'node'`).
+
+**Contract extensions from implementation:**
+- `_setSnake/setBall/setBullet/setFrog` pattern: test helpers mutate internal state directly (not via copies) so that physics checks in the same tick see the updated state. This is the established pattern for all subsequent games.
+- Mouse_y remapped to horizontal axis in Breakout (row fraction → paddle column) — deviation from pong's vertical use. Noted in per-game help text.
+- `near_miss` in single-player games = "life lost but not last" (not a near-miss on a paddle). Consistent across Breakout, Invaders, Frogger.
 
 **Integration pending**: wire the arcade into the main SCRAP UI — probably via a trigger phrase or `/games` command in chat that swaps the face matrix panel for the GameGrid.
 
 ## Roadmap (priority order)
 
-1. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, etc.) to SCRAP's personality responses.
+1. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, etc.) to SCRAP's personality responses. All 6 games complete and tested; sandbox cycling works.
 2. **Backlog**:
    - Chunk-1 ranking: chunk-0 injection helps identity queries, but second-chunk answers (e.g. biographical details in the second paragraph) can still rank poorly — may need a soft positional prior.
    - PDF document mode: load a user-supplied PDF as a session-scoped knowledge base (in addition to or instead of the always-on wiki KBs).
