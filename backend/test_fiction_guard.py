@@ -5,21 +5,27 @@ sys.path.insert(0, os.path.dirname(__file__))
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
-from main import apply_fiction_filter, is_fictional_source, question_is_fiction_scoped
+from main import app, apply_fiction_filter, is_fictional_source, question_is_fiction_scoped
 
 _WIKIPEDIA_FULL_DB = Path(__file__).parent / "data" / "wikipedia-full" / "wikipedia-full.sqlite3"
-_BACKEND_URL = "http://127.0.0.1:8000"
+_OLLAMA_URL = "http://localhost:11434"
+
+_client = TestClient(app, raise_server_exceptions=True)
 
 
-def _require_live_backend():
+def _require_kb():
     if not _WIKIPEDIA_FULL_DB.exists():
         pytest.skip(f"wikipedia-full KB not found: {_WIKIPEDIA_FULL_DB}")
+
+
+def _require_ollama():
     try:
         import requests
-        requests.get(f"{_BACKEND_URL}/health", timeout=2).raise_for_status()
+        requests.get(f"{_OLLAMA_URL}/api/tags", timeout=2).raise_for_status()
     except Exception:
-        pytest.skip("backend not reachable at http://127.0.0.1:8000")
+        pytest.skip(f"Ollama not reachable at {_OLLAMA_URL}")
 
 
 def test_atlantis_aquaman_fictional():
@@ -92,12 +98,10 @@ def test_apply_fiction_filter_no_meta_clean_kept():
 
 def test_chat_atlantis_capital_falls_back_live():
     """Real-world Atlantis capital question must fall back, not answer from fictional articles."""
-    _require_live_backend()
-    import requests
-    resp = requests.post(
-        f"{_BACKEND_URL}/chat",
+    _require_kb()
+    resp = _client.post(
+        "/chat",
         json={"message": "What is the capital of Atlantis?", "knowledge_base": "wikipedia-full", "history": []},
-        timeout=60,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -109,12 +113,11 @@ def test_chat_atlantis_capital_falls_back_live():
 
 def test_chat_einstein_university_answered_live():
     """Entity-boost acceptance gate: 'What university did Einstein attend?' must surface the Albert Einstein article."""
-    _require_live_backend()
-    import requests
-    resp = requests.post(
-        f"{_BACKEND_URL}/chat",
+    _require_kb()
+    _require_ollama()
+    resp = _client.post(
+        "/chat",
         json={"message": "What university did Einstein attend?", "knowledge_base": "wikipedia-full", "history": []},
-        timeout=60,
     )
     resp.raise_for_status()
     data = resp.json()

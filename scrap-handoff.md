@@ -128,7 +128,7 @@ Standalone sandbox at `/arcade` route. Not yet wired into the main SCRAP chat UI
 - The **fiction guard** must survive all retrieval changes: "Atlantis capital" must still return "unknown" for the fictional/DC-ambiguous case. The guard logic is in `main.py`; the 14 tests in `test_fiction_guard.py` are the regression suite.
 - The exact **"unknown" string behavior** (KB mode returns a specific string, not a generic LLM reply) must be preserved.
 - `article_meta` / `article_redirects` tables must remain the source of truth for entity resolution.
-- All 119 pytest + 23 wiki smoke + 17 TTS smoke tests must stay green after any change.
+- All 127 pytest + 23 wiki smoke + 17 TTS smoke tests must stay green after any change.
 - KB-mode replies must stay factual — no emotion tag, no joke injection.
 
 ## Misc environment notes (carried forward)
