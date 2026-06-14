@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createBreakout } from './breakout.js'
 
+// Canvas breakout — logical constants (must match breakout.js)
+const LOGICAL_W = 480
+const LOGICAL_H = 320
+
+// Mock API — canvas games only need emit; no setDot/clearGrid.
 function mockApi() {
   const events = []
   return {
-    setDot: vi.fn(),
-    clearGrid: vi.fn(),
     emit: vi.fn((name, data) => events.push({ name, data: data ?? null })),
     events,
   }
@@ -15,7 +18,7 @@ function skipCountdown(game) {
   game.tick(800); game.tick(800); game.tick(800)
 }
 
-describe('breakout', () => {
+describe('breakout (canvas)', () => {
   let api, game
 
   beforeEach(() => {
@@ -27,6 +30,23 @@ describe('breakout', () => {
     api.emit.mockClear()
   })
 
+  // ── Meta ──────────────────────────────────────────────────────────────────
+
+  it('meta.renderer is canvas', () => {
+    expect(game.meta.renderer).toBe('canvas')
+  })
+
+  it('meta.logicalWidth / logicalHeight match 480×320', () => {
+    expect(game.meta.logicalWidth).toBe(LOGICAL_W)
+    expect(game.meta.logicalHeight).toBe(LOGICAL_H)
+  })
+
+  it('render method exists', () => {
+    expect(typeof game.render).toBe('function')
+  })
+
+  // ── Startup ───────────────────────────────────────────────────────────────
+
   it('emits game_start on init', () => {
     const g = createBreakout()
     const a = mockApi()
@@ -34,8 +54,9 @@ describe('breakout', () => {
     expect(a.events.some(e => e.name === 'game_start')).toBe(true)
   })
 
+  // ── Ball physics ──────────────────────────────────────────────────────────
+
   it('ball bounces off top wall: vy becomes positive', () => {
-    // Use col 0 (outside brick columns 1-22) so no brick hit cancels the bounce
     game._setBall(0, 0.4, 0, -90)
     game._forcePhase('playing')
     game.tick(16.67)
@@ -56,9 +77,10 @@ describe('breakout', () => {
     expect(game._getBall().vx).toBeLessThan(0)
   })
 
+  // ── Scoring ───────────────────────────────────────────────────────────────
+
   it('brick hit clears brick and emits player_scored', () => {
     const beforeBricks = game._getBricksRemaining()
-    // Place ball moving into row 3 brick at col 5
     game._setBall(5, 2.4, 0, 9)
     game._forcePhase('playing')
     game.tick(16.67)
@@ -66,10 +88,10 @@ describe('breakout', () => {
     expect(game._getBricksRemaining()).toBe(beforeBricks - 1)
   })
 
+  // ── Win / loss ────────────────────────────────────────────────────────────
+
   it('ball below paddle emits scrap_won when last life lost', () => {
-    // Exhaust lives by dropping ball below paddle repeatedly
     for (let life = 0; life < 3; life++) {
-      // Drop ball below paddle and out of bounds
       game._setBall(12, 17, 0, 9)
       game._forcePhase('playing')
       for (let t = 0; t < 10; t++) game.tick(16.67)
@@ -86,14 +108,7 @@ describe('breakout', () => {
   })
 
   it('all bricks cleared emits scrap_lost', () => {
-    // Force score = total bricks - 1, then hit one more
     const total = game._getBricksRemaining()
-    // Simulate clearing all but one brick via direct ball hits into brick rows
-    // Drive ball through entire brick area by direct manipulation
-    // Set remaining bricks to 1 programmatically via repeated brick hits
-    // Simpler: emit check after player_scored clears the last brick
-    // We'll just verify the mechanism by clearing via rapid ticks
-    // Place ball to sweep through rows 1-5 quickly
     for (let b = 0; b < total; b++) {
       const row = 1 + (b % 5)
       const col = 1 + Math.floor(b / 5)
@@ -105,6 +120,8 @@ describe('breakout', () => {
     expect(api.events.some(e => e.name === 'scrap_lost')).toBe(true)
   })
 
+  // ── Input ─────────────────────────────────────────────────────────────────
+
   it('paddle moves left with ArrowLeft input', () => {
     const before = game._getPaddle().x
     game.input({ type: 'keydown', key: 'ArrowLeft' })
@@ -114,7 +131,7 @@ describe('breakout', () => {
   })
 
   it('paddle moves right with ArrowRight input', () => {
-    game._setPaddleX(5)  // not at right wall
+    game._setPaddleX(5)
     const before = game._getPaddle().x
     game.input({ type: 'keydown', key: 'ArrowRight' })
     game._forcePhase('playing')
