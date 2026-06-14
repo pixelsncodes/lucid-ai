@@ -2,9 +2,9 @@
 
 ## Next session — start here (June 14, 2026)
 
-**Playtesting (not yet done)**
-- Manual playtest of all 4 recently-changed games: Breakout (post f204621 physics fix), Tron, Connect Four, Tic-Tac-Toe. Golden path + edge cases. Monitor for event emission and phase transitions.
-- Flag: Tron `near_miss` fires when SCRAP trail or border is immediately perpendicular to the player's heading. The original intent was "wall-proximity" (how close the player is to the walls); the shipped implementation is perpendicular-cell detection. Confirm the feel is right during playtest — if not, revise the detection logic and update the near_miss semantics note below.
+**Playtesting — DONE**
+- Breakout (post f204621 physics fix), Tron, Connect Four, Tic-Tac-Toe all playtested. No bugs observed.
+- Tron `near_miss` feel: fires when SCRAP trail or border is immediately perpendicular to the player's heading. Trigger logic confirmed working — verify the feel stays right as personality responses are wired in during arcade integration.
 
 **Outstanding from the VAD session (7 manual checks)**
 - The 7 manual browser VAD checks listed in the VAD session notes were never executed. Run them before any VAD-adjacent changes.
