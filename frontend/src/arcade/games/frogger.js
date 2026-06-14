@@ -1,4 +1,6 @@
-import { OFF, DIM, LIT } from '../constants'
+// ── Canvas Frogger ────────────────────────────────────────────────────────────
+// Hybrid: frog hops in discrete row steps; cars/logs move continuously.
+// Renders via render(ctx, {w, h}); tick() is pure logic.
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 //
@@ -8,24 +10,26 @@ import { OFF, DIM, LIT } from '../constants'
 //  Rows 7-11: road lanes (frog must dodge cars)
 //  Row 12 : safe home row (frog spawns here)
 
-const COLS      = 16
-const ROWS      = 13
-const HOME_ROW  = ROWS - 1   // row 12 — frog spawn
-const GOAL_ROW  = 0
+const COLS     = 16
+const ROWS     = 13
+const HOME_ROW = ROWS - 1   // row 12
+const GOAL_ROW = 0
 
-const PAD_COLS  = [1, 4, 7, 10, 13]  // lily pad columns
+const PAD_COLS = [1, 4, 7, 10, 13]
+
+const LOGICAL_W = 320
+const LOGICAL_H = 260
 
 // ── Lane definitions ──────────────────────────────────────────────────────────
-// { row, type:'river'|'road', speed (dots/sec), dir:+1|-1, items:[{col,len}] }
 
 const LANES = [
-  // River (frog must be ON a log; logs are DIM)
+  // River
   { row: 1, type: 'river', speed: 3.0,  dir: +1, items: [{ col:  0, len: 4 }, { col:  9, len: 3 }] },
   { row: 2, type: 'river', speed: 2.0,  dir: -1, items: [{ col:  1, len: 3 }, { col:  8, len: 4 }, { col: 14, len: 2 }] },
   { row: 3, type: 'river', speed: 3.5,  dir: +1, items: [{ col:  2, len: 3 }, { col: 10, len: 3 }] },
   { row: 4, type: 'river', speed: 2.5,  dir: -1, items: [{ col:  0, len: 5 }, { col: 11, len: 3 }] },
   { row: 5, type: 'river', speed: 1.5,  dir: +1, items: [{ col:  1, len: 2 }, { col:  6, len: 3 }, { col: 12, len: 2 }] },
-  // Road (frog must dodge cars; cars are LIT)
+  // Road
   { row: 7, type: 'road',  speed: 4.0,  dir: -1, items: [{ col:  3, len: 2 }, { col: 11, len: 2 }] },
   { row: 8, type: 'road',  speed: 3.0,  dir: +1, items: [{ col:  0, len: 2 }, { col:  8, len: 3 }] },
   { row: 9, type: 'road',  speed: 5.0,  dir: -1, items: [{ col:  5, len: 2 }, { col: 13, len: 2 }] },
@@ -36,33 +40,30 @@ const LANES = [
 const RIVER_ROWS = new Set(LANES.filter(l => l.type === 'river').map(l => l.row))
 const ROAD_ROWS  = new Set(LANES.filter(l => l.type === 'road').map(l => l.row))
 
-const LIVES_INIT = 3
+const LIVES_INIT        = 3
 const COUNTDOWN_STEP_MS = 800
-const DEATH_PAUSE_MS    = 800   // pause before respawn
+const DEATH_PAUSE_MS    = 800
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 export function createFrogger() {
   let api = null
 
-  // Item positions (float cols, wrap by COLS)
-  let lanePositions = []  // [lane_idx] → [{ col: float }]
+  let lanePositions = []
 
-  // Frog
-  let frogCol  = 8      // float (drifts with log)
-  let frogRow  = HOME_ROW
-  let frogOnLog = null  // { laneIdx, itemIdx } or null
+  let frogCol   = 8
+  let frogRow   = HOME_ROW
+  let frogOnLog = null
 
-  // Homes
   let homes = [false, false, false, false, false]
 
-  let lives  = LIVES_INIT
-  let score  = 0
-  let phase  = 'idle'
+  let lives      = LIVES_INIT
+  let score      = 0
+  let phase      = 'idle'
   let phaseTimer = 0
   let countdownN = 3
 
-  let hopQueued = null  // { dc, dr } — queued hop
+  let hopQueued = null
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -99,12 +100,9 @@ export function createFrogger() {
     phase     = 'playing'
   }
 
-  // Does the item at lanePositions[li][ii] cover float column col?
   function itemCoversCol(li, ii, col) {
     const len  = LANES[li].items[ii].len
     const head = lanePositions[li][ii].col
-
-    // Account for wrap-around: check the item at its position AND one wrap away
     for (const base of [head, head - COLS, head + COLS]) {
       if (col >= base - 0.6 && col <= base + len - 1 + 0.6) return true
     }
@@ -140,7 +138,6 @@ export function createFrogger() {
   function checkDeath() {
     const fc = Math.round(frogCol)
 
-    // Out of bounds (drifted off)
     if (frogCol < -0.5 || frogCol >= COLS + 0.5) { die('drift'); return true }
 
     if (RIVER_ROWS.has(frogRow)) {
@@ -152,10 +149,8 @@ export function createFrogger() {
     }
 
     if (frogRow === GOAL_ROW) {
-      // Must land on a pad
       const padIdx = PAD_COLS.indexOf(fc)
       if (padIdx < 0 || homes[padIdx]) { die(padIdx >= 0 ? 'pad_taken' : 'water'); return true }
-      // Score!
       homes[padIdx] = true
       score++
       api.emit('player_scored', { score, homesFilledCount: homes.filter(Boolean).length })
@@ -183,50 +178,128 @@ export function createFrogger() {
     }
   }
 
-  // ── Drawing ────────────────────────────────────────────────────────────────
+  // ── Rendering ─────────────────────────────────────────────────────────────
 
-  function dot(c, r, state) { api.setDot(c, r, state) }
+  function render(ctx, { w, h }) {
+    const cellW = w / COLS
+    const cellH = h / ROWS
 
-  function drawScene() {
-    api.clearGrid()
+    // Background
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, w, h)
 
-    // Median (row 6) and home row (row 12): DIM background
-    for (let c = 0; c < COLS; c++) dot(c, 6, DIM)
-    for (let c = 0; c < COLS; c++) dot(c, HOME_ROW, DIM)
+    // Zone backgrounds
+    // River zone (rows 1-5): very dark blue-black
+    ctx.fillStyle = 'rgba(0,20,50,0.9)'
+    ctx.fillRect(0, cellH, w, cellH * 5)
 
-    // Goal row (row 0): pads
-    for (let i = 0; i < PAD_COLS.length; i++) dot(PAD_COLS[i], 0, homes[i] ? LIT : DIM)
+    // Median (row 6) and home row (row 12): dim grey strip
+    ctx.fillStyle = 'rgba(255,255,255,0.07)'
+    ctx.fillRect(0, 6 * cellH, w, cellH)
+    ctx.fillRect(0, HOME_ROW * cellH, w, cellH)
 
-    // Lives HUD on home row (right side)
-    for (let i = 0; i < LIVES_INIT; i++) dot(COLS - 1 - i, HOME_ROW, i < lives ? LIT : DIM)
+    // Goal row (row 0) — dark background
+    ctx.fillStyle = 'rgba(0,20,50,0.9)'
+    ctx.fillRect(0, 0, w, cellH)
 
-    // Draw lanes
+    // Lily pads
+    for (let i = 0; i < PAD_COLS.length; i++) {
+      const px = PAD_COLS[i] * cellW
+      ctx.fillStyle = homes[i] ? '#fff' : 'rgba(255,255,255,0.35)'
+      // Round pad shape — just a rect for crispness
+      ctx.fillRect(px + 2, 3, cellW - 4, cellH - 5)
+    }
+
+    // Lane items (logs and cars)
     for (let li = 0; li < LANES.length; li++) {
-      const lane   = LANES[li]
-      const dotState = lane.type === 'river' ? DIM : LIT
+      const lane = LANES[li]
+      const isRiver = lane.type === 'river'
+      ctx.fillStyle = isRiver ? 'rgba(255,255,255,0.45)' : '#fff'
+
       for (let ii = 0; ii < lanePositions[li].length; ii++) {
-        const head = lanePositions[li][ii].col
-        const len  = LANES[li].items[ii].len
-        for (let k = 0; k < len; k++) {
-          const c = Math.floor(wrap(head + k, COLS))
-          dot(c, lane.row, dotState)
+        const head    = lanePositions[li][ii].col
+        const len     = LANES[li].items[ii].len
+        const py      = lane.row * cellH
+        const itemW   = len * cellW
+
+        // Draw at base position and one wrap in each direction (canvas clips automatically)
+        for (const base of [head, head - COLS, head + COLS]) {
+          const bx = base * cellW
+          if (isRiver) {
+            ctx.fillRect(bx + 1, py + 2, itemW - 2, cellH - 4)
+          } else {
+            // Car: slightly shorter, brighter
+            ctx.fillRect(bx + 1, py + 3, itemW - 2, cellH - 6)
+          }
         }
       }
     }
 
     // Frog
-    const fc = Math.round(frogCol)
-    if (fc >= 0 && fc < COLS && frogRow >= 0 && frogRow < ROWS)
-      dot(fc, frogRow, LIT)
+    if (phase !== 'gameover' && phase !== 'win') {
+      const fx = frogCol * cellW
+      const fy = frogRow * cellH
+      const alpha = phase === 'dead' ? 0.3 : 1
+      ctx.fillStyle = `rgba(255,255,255,${alpha})`
+      ctx.fillRect(fx + 3, fy + 3, cellW - 6, cellH - 6)
+    }
+
+    // HUD — lives bottom-left, score bottom-right
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'
+    ctx.font = '11px monospace'
+    ctx.textBaseline = 'bottom'
+    ctx.textAlign = 'left'
+    ctx.fillText('♥ '.repeat(lives).trim(), 4, h - 2)
+    ctx.textAlign = 'right'
+    ctx.fillText(`${score}`, w - 4, h - 2)
+
+    // Countdown overlay
+    if (phase === 'countdown') {
+      ctx.fillStyle = '#fff'
+      ctx.font = '60px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(String(countdownN), w / 2, h / 2)
+    }
+
+    // Win screen
+    if (phase === 'win') {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'
+      ctx.fillRect(0, 0, w, h)
+      ctx.fillStyle = '#fff'
+      ctx.font = '36px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('YOU WIN', w / 2, h / 2 - 22)
+      ctx.font = '14px monospace'
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillText('space to play again', w / 2, h / 2 + 18)
+    }
+
+    // Game-over screen
+    if (phase === 'gameover') {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'
+      ctx.fillRect(0, 0, w, h)
+      ctx.fillStyle = '#fff'
+      ctx.font = '32px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('GAME OVER', w / 2, h / 2 - 22)
+      ctx.font = '14px monospace'
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillText('space to play again', w / 2, h / 2 + 18)
+    }
   }
 
   // ── Contract ────────────────────────────────────────────────────────────────
 
   return {
     meta: {
-      id:       'frogger',
-      name:     'FROGGER',
-      gridSize: { cols: COLS, rows: ROWS },
+      id:            'frogger',
+      name:          'FROGGER',
+      renderer:      'canvas',
+      logicalWidth:  LOGICAL_W,
+      logicalHeight: LOGICAL_H,
     },
 
     init(_api) {
@@ -261,13 +334,11 @@ export function createFrogger() {
           countdownN--
           if (countdownN <= 0) { phase = 'playing'; break }
         }
-        drawScene()
         return
       }
 
       if (phase === 'dead') {
         phaseTimer += dt
-        drawScene()
         if (phaseTimer >= DEATH_PAUSE_MS) respawnFrog()
         return
       }
@@ -295,36 +366,27 @@ export function createFrogger() {
           hopQueued = null
 
           const newRow = clamp(frogRow + dr, 0, ROWS - 1)
-          const newCol = Math.round(frogCol) + dc  // discretize before hop
+          const newCol = Math.round(frogCol) + dc
 
-          frogRow  = newRow
-          frogCol  = newCol
+          frogRow   = newRow
+          frogCol   = newCol
           frogOnLog = null
 
-          // After hop: re-check if frog is on a log
           if (RIVER_ROWS.has(frogRow)) {
             frogOnLog = findLog(frogRow, frogCol)
           }
         } else if (RIVER_ROWS.has(frogRow)) {
-          // Re-find log (log may have moved out from under frog)
           frogOnLog = findLog(frogRow, frogCol)
         }
 
-        // Check survival
-        if (!checkDeath()) {
-          // Emit near_miss when frog is between car lanes (just passed a car gap)
-          // (already handled in die() for actual deaths)
-        }
-
-        drawScene()
+        checkDeath()
         return
       }
 
-      if (phase === 'win' || phase === 'gameover') {
-        drawScene()
-        return
-      }
+      // win / gameover — no per-tick logic needed
     },
+
+    render,
 
     destroy() { api = null },
 
