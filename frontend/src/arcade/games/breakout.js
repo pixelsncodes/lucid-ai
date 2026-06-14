@@ -8,9 +8,9 @@
 const COLS         = 24
 const ROWS         = 16
 const BRICK_ROW_1  = 1          // first brick row
-const BRICK_ROW_N  = 5          // last brick row (5 rows × 22 bricks = 110)
-const BRICK_COL_1  = 1
-const BRICK_COL_N  = COLS - 2   // cols 1..22
+const BRICK_ROW_N  = 5          // last brick row (5 rows × 24 bricks = 120)
+const BRICK_COL_1  = 0
+const BRICK_COL_N  = COLS - 1   // cols 0..23
 const PADDLE_ROW   = ROWS - 1   // row 15
 const PADDLE_WIDTH = 4
 
@@ -25,13 +25,14 @@ const BALL_SPEED_BUMP = 1.06
 const SERVE_ANGLE_MIN = 0.3
 
 // ── Pixel-to-grid geometry ────────────────────────────────────────────────────
-// Ball is drawn as an 8px square sprite; at cellH = LOGICAL_H/ROWS = 20px that
-// is 0.4 grid cells.  PADDLE_TOP is the grid-coord top edge of the paddle rect,
-// shared by both the physics plane and the render call so they never diverge.
+// Ball is drawn as an 8px square sprite (±4px); at cellH = LOGICAL_H/ROWS = 20px
+// the radius is 4px / 20px = 0.2 cells.  PADDLE_TOP is the grid-coord top edge of
+// the paddle rect, shared by both the physics plane and the render call so they
+// never diverge.
 
-const BALL_RADIUS_CELLS = 8 / (LOGICAL_H / ROWS)    // 0.4 cells
+const BALL_RADIUS_CELLS = 4 / (LOGICAL_H / ROWS)    // 0.2 cells — sprite is ±4px in a 20px cell
 const PADDLE_TOP        = PADDLE_ROW + 0.35          // grid-coord top edge of paddle
-const BRICK_HIT_HALF    = 0.5 + BALL_RADIUS_CELLS   // 0.9 — brick half + ball radius
+const BRICK_HIT_HALF    = 0.5 + BALL_RADIUS_CELLS   // 0.7 — brick half + ball radius
 
 // ── Timing ───────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,6 @@ export function createBreakout() {
   let countdownN = 3
 
   let arrowDelta = 0
-  let mouseCol   = null
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -91,7 +91,6 @@ export function createBreakout() {
     score      = 0
     ball.speed = BALL_SPEED_INIT
     arrowDelta = 0
-    mouseCol   = null
     startCountdown()
     api.emit('game_start', { game: 'breakout' })
   }
@@ -109,19 +108,21 @@ export function createBreakout() {
     const dtS = dt / 1000
 
     // Paddle movement
-    if (mouseCol !== null) {
-      paddle.x = clamp(mouseCol, 0, COLS - PADDLE_WIDTH)
-    } else {
-      paddle.x = clamp(paddle.x + arrowDelta * 14 * dtS, 0, COLS - PADDLE_WIDTH)
-    }
+    paddle.x = clamp(paddle.x + arrowDelta * 14 * dtS, 0, COLS - PADDLE_WIDTH)
 
     const prevX = ball.x, prevY = ball.y
     ball.x += ball.vx * dtS
     ball.y += ball.vy * dtS
 
-    // Left/right walls
-    if (ball.x < 0)       { ball.x = -ball.x;              ball.vx =  Math.abs(ball.vx) }
-    if (ball.x >= COLS)   { ball.x = 2*(COLS-1) - ball.x;  ball.vx = -Math.abs(ball.vx) }
+    // Left/right walls — radius-aware, symmetric: ball edge bounces at pixel 0 / COLS
+    if (ball.x - BALL_RADIUS_CELLS < 0) {
+      ball.x  = 2 * BALL_RADIUS_CELLS - ball.x
+      ball.vx = Math.abs(ball.vx)
+    }
+    if (ball.x + BALL_RADIUS_CELLS > COLS) {
+      ball.x  = 2 * (COLS - BALL_RADIUS_CELLS) - ball.x
+      ball.vx = -Math.abs(ball.vx)
+    }
 
     // Top wall
     if (ball.y < BRICK_ROW_1 - 0.5) {
@@ -296,13 +297,6 @@ export function createBreakout() {
     },
 
     input(event) {
-      if (event.type === 'mouse_y' || event.type === 'touch_y') {
-        // mouse Y fraction → paddle X (vertical mouse movement controls horizontal paddle)
-        if (event.row === null) { mouseCol = null; return }
-        const frac = event.row / LOGICAL_H
-        mouseCol   = frac * (COLS - PADDLE_WIDTH)
-        return
-      }
       if (event.type !== 'keydown' && event.type !== 'keyup') return
       const { key, type } = event
 
@@ -318,8 +312,8 @@ export function createBreakout() {
           }
           return
         }
-        if (key === 'ArrowLeft')  { arrowDelta = -1; mouseCol = null }
-        if (key === 'ArrowRight') { arrowDelta =  1; mouseCol = null }
+        if (key === 'ArrowLeft')  arrowDelta = -1
+        if (key === 'ArrowRight') arrowDelta =  1
         if ((key === ' ' || key === 'Enter') && (phase === 'win' || phase === 'gameover')) {
           ball.speed = BALL_SPEED_INIT
           startGame()

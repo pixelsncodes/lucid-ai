@@ -111,9 +111,11 @@ describe('breakout (canvas)', () => {
     const total = game._getBricksRemaining()
     for (let b = 0; b < total; b++) {
       const row = 1 + (b % 5)
-      const col = 1 + Math.floor(b / 5)
-      if (col > 22) break
-      game._setBall(col, row - 0.5, 0, 9)
+      const col = Math.floor(b / 5)
+      if (col > 23) break
+      // col+0.25 keeps the ball's x within ±0.7 of bc=col only, avoiding wall
+      // bounces (col=0) and adjacent-column spill that would waste an iteration.
+      game._setBall(col + 0.25, row - 0.5, 0, 9)
       game._forcePhase('playing')
       game.tick(16.67)
     }
