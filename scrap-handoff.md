@@ -99,7 +99,7 @@ Root causes were in FTS5 query construction (filler-word stopwords), plural/suff
 ## Test suites — must stay green
 **127 pytest** (9 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 35, `test_stt_vad_filter` 1, `test_reranker` 4) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
 
-**80 vitest** (6 test files: pong 19, snake 12, breakout 13, invaders 12, tetris 12, frogger 12) run headless with `npm test` from `frontend/`. All test file names end in `.test.js`. Mock API is canvas-only (`emit` only; no setDot/clearGrid).
+**80 vitest** (6 test files: pong 19, snake 12, breakout 13, invaders 12, tetris 12, frogger 12) run headless with `npm test` from `frontend/`. All test file names end in `.test.js`. Mock API is canvas-only (`emit` only; no setDot/clearGrid). invaders.test.js bullet x updated to 4 to match new INV_START_C=4.
 
 Note: smoke tests emit fiction-guard probes (e.g. "What is the capital of Atlantis?") into the uvicorn log — that's expected test traffic.
 
@@ -141,10 +141,10 @@ Breakout's mouse input re-maps vertical mouse position to horizontal paddle colu
 |------|---------------|------|------|-------|
 | `pong.js`     | 640×384  | —      | —    | Continuous physics. Dashed net, monospace score. AI capped 3.7px/frame. |
 | `snake.js`    | 480×280  | 24×14  | 20px | Grid-logical stepping. Pip score strip row 0. Blinking food. |
-| `breakout.js` | 480×320  | 24×16  | 20px | Continuous ball/paddle. Physics in grid coords, scaled in render. |
-| `invaders.js` | 480×320  | 24×16  | 20px | Continuous bullets/bombs. Blocky invader glyphs. |
+| `breakout.js` | 480×320  | 24×16  | 20px | Continuous ball/paddle. Physics in grid coords, scaled in render. PADDLE_TOP=PADDLE_ROW+0.35 is the single paddle-top coord shared by collision plane and render. BALL_RADIUS_CELLS=0.4; brick collision is radius-based AABB with min-overlap axis. |
+| `invaders.js` | 480×320  | 24×16  | 20px | Continuous bullets/bombs. Blocky invader glyphs. Army: INV_COLS=8, INV_ROWS=4, INV_SPACING=2, INV_START_C=4 (cols 4,6..18). Player movement continuous float at PLAYER_SPEED=11 cells/sec; bomb hit and bullet fire use Math.round(player.x). |
 | `tetris.js`   | 240×480  | 10×20  | 24px | Portrait. Board uses OFF/DIM. Score/level HUD overlay at bottom. |
-| `frogger.js`  | 320×260  | 16×13  | 20px | Hybrid: discrete row hops, continuous lane traffic. |
+| `frogger.js`  | 320×260  | 16×13  | 20px | Hybrid: discrete row hops, continuous lane traffic. findCar uses Math.round(head) (was Math.floor) to align collision band with rendered sprite. |
 
 **Events unchanged** from original matrix implementations. `near_miss` in single-player games = "life lost but not last".
 
