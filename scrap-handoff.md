@@ -99,17 +99,17 @@ Root causes were in FTS5 query construction (filler-word stopwords), plural/suff
 ## Test suites — must stay green
 **127 pytest** (9 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 35, `test_stt_vad_filter` 1, `test_reranker` 4) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
 
-**80 vitest** (6 test files: pong 19, snake 12, breakout 13, invaders 12, tetris 12, frogger 12) run headless with `npm test` from `frontend/`. All test file names end in `.test.js`. Mock API is canvas-only (`emit` only; no setDot/clearGrid). invaders.test.js bullet x updated to 4 to match new INV_START_C=4.
+**148 vitest** (9 test files: pong 19, snake 12, breakout 13, invaders 12, tetris 12, frogger 12, tron 17, connect4 23, tictactoe 28) run headless with `npm test` from `frontend/`. All test file names end in `.test.js`. Mock API is canvas-only (`emit` only; no setDot/clearGrid). invaders.test.js bullet x updated to 4 to match new INV_START_C=4.
 
 Note: smoke tests emit fiction-guard probes (e.g. "What is the capital of Atlantis?") into the uvicorn log — that's expected test traffic.
 
-## Arcade track — canvas renderer COMPLETE (Sessions 1+2, June 2026)
+## Arcade track — canvas renderer COMPLETE (Sessions 1–3, June 2026)
 
 Standalone sandbox at `/arcade` route. Not yet wired into the main SCRAP chat UI.
 
 ### Renderer system
 
-All six games use `meta.renderer = 'canvas'`. The dot/matrix path has been fully retired.
+All nine games use `meta.renderer = 'canvas'`. The dot/matrix path has been fully retired.
 
 **Canvas contract:**
 ```
@@ -125,38 +125,68 @@ render(ctx, { w, h }): void
 ```
 
 `mouse_y` / `touch_y` events deliver a logical Y coordinate (0..logicalHeight).
-Breakout's mouse input re-maps vertical mouse position to horizontal paddle column (deviation from Pong's vertical paddle use — intentional).
+`tap` events deliver `{ type:'tap', x, y }` in logical coordinates — used by grid games for column/cell selection (see Tap Input below).
+
+### Tap input (additive, Session 3)
+
+`mousedown`/`touchstart` on the arena converts the pointer position to logical `{x, y}` using the **canvas element's** bounding rect (not the padded arena div). Sends `{ type:'tap', x, y }` to `game.input()`. `GameCanvas.jsx` exposes `ref.getCanvas()` to provide the DOM element. Existing games ignore tap events — additive, nothing breaks.
+
+### Turn-based phase machine (new pattern, Session 3)
+
+Connect Four and Tic-Tac-Toe use a shared turn-based pattern inside the fixed-timestep contract:
+
+```
+phase: 'player_turn' | 'scrap_thinking' | 'over'
+```
+
+- Input only acts in `player_turn`.
+- On player move → choose SCRAP's response immediately (minimax/heuristic), set `phase = 'scrap_thinking'`, start `thinkTimer = 0`.
+- `tick(dt)` accumulates `thinkTimer`; at ≥ 500ms → execute SCRAP's move, transition to `player_turn` or `over`.
+- The 500ms delay makes SCRAP feel deliberate and gives the personality layer a "thinking" beat.
+
+### Event vocabulary additions (Session 3)
+
+**`draw`** — emitted when a game ends with no winner (Connect Four full board, TTT full board). New vocabulary item for the personality layer. Data: `{ game: 'connect4' | 'tictactoe' }`.
+
+All other events (`game_start`, `near_miss`, `player_scored`, `scrap_scored`, `scrap_won`, `scrap_lost`, `game_quit`) are unchanged.
 
 ### Files: `frontend/src/arcade/`
 
-- `GameCanvas.jsx` — DPI-aware `<canvas>`. `ref.getCtx()` returns `{ ctx, w, h }` with pre-applied logical-to-physical transform.
-- `gameConsole.js` — factory + game-console contract. Fixed 60fps timestep; calls `game.render(ctx, {w, h})` after each tick batch. Removed: setDot, clearGrid, onDraw, dots buffer.
-- `constants.js` — board cell states only: `OFF=0`, `DIM=1`, `LIT=2` (used by tetris.js for board tracking and tetris.test.js assertions).
-- `ArcadeSandbox.jsx` / `ArcadeSandbox.css` — standalone `/arcade` route. All 6 games wired in. Tab cycles forward, Shift+Tab cycles back, keys 1–6 jump directly. Always renders `<GameCanvas>`.
-- **Removed:** `GameGrid.jsx`, `GameGrid.css` (dot-matrix renderer, retired).
+- `GameCanvas.jsx` — DPI-aware `<canvas>`. `ref.getCtx()` returns `{ ctx, w, h }` with pre-applied logical-to-physical transform. `ref.getCanvas()` returns the raw DOM element (used for tap bounding-rect calculation).
+- `gameConsole.js` — factory + game-console contract. Fixed 60fps timestep; calls `game.render(ctx, {w, h})` after each tick batch.
+- `constants.js` — board cell states only: `OFF=0`, `DIM=1`, `LIT=2` (used by tetris.js / tetris.test.js).
+- `ArcadeSandbox.jsx` / `ArcadeSandbox.css` — standalone `/arcade` route. All 9 games wired in. Tab cycles forward, Shift+Tab cycles back, keys 1–9 jump directly. Always renders `<GameCanvas>`.
+- **Removed:** `GameGrid.jsx`, `GameGrid.css` (dot-matrix renderer, retired Session 2).
 
 ### Games — all on canvas renderer
 
-| Game | Logical canvas | Grid | Cell | Notes |
-|------|---------------|------|------|-------|
-| `pong.js`     | 640×384  | —      | —    | Continuous physics. Dashed net, monospace score. AI capped 3.7px/frame. |
-| `snake.js`    | 480×280  | 24×14  | 20px | Grid-logical stepping. Pip score strip row 0. Blinking food. |
-| `breakout.js` | 480×320  | 24×16  | 20px | Continuous ball/paddle. Physics in grid coords, scaled in render. PADDLE_TOP=PADDLE_ROW+0.35 is the single paddle-top coord shared by collision plane and render. BALL_RADIUS_CELLS=0.4; brick collision is radius-based AABB with min-overlap axis. |
-| `invaders.js` | 480×320  | 24×16  | 20px | Continuous bullets/bombs. Blocky invader glyphs. Army: INV_COLS=8, INV_ROWS=4, INV_SPACING=2, INV_START_C=4 (cols 4,6..18). Player movement continuous float at PLAYER_SPEED=11 cells/sec; bomb hit and bullet fire use Math.round(player.x). |
-| `tetris.js`   | 240×480  | 10×20  | 24px | Portrait. Board uses OFF/DIM. Score/level HUD overlay at bottom. |
-| `frogger.js`  | 320×260  | 16×13  | 20px | Hybrid: discrete row hops, continuous lane traffic. findCar uses Math.round(head) (was Math.floor) to align collision band with rendered sprite. |
+| # | Game | Logical canvas | Grid | Cell | Notes |
+|---|------|---------------|------|------|-------|
+| 1 | `pong.js`     | 640×384  | —      | —    | Continuous physics. Dashed net, monospace score. AI capped 3.7px/frame. |
+| 2 | `snake.js`    | 480×280  | 24×14  | 20px | Grid-logical stepping. Pip score strip row 0. Blinking food. |
+| 3 | `breakout.js` | 480×320  | 24×16  | 20px | Continuous ball/paddle. PADDLE_TOP=PADDLE_ROW+0.35; BALL_RADIUS_CELLS=0.4; brick AABB min-overlap axis. |
+| 4 | `invaders.js` | 480×320  | 24×16  | 20px | Continuous bullets/bombs. INV_COLS=8, INV_ROWS=4, INV_START_C=4. Player continuous float; bomb/bullet use Math.round(x). |
+| 5 | `tetris.js`   | 240×480  | 10×20  | 24px | Portrait. Board uses OFF/DIM. Score/level HUD at bottom. |
+| 6 | `frogger.js`  | 320×260  | 16×13  | 20px | Hybrid discrete/continuous. findCar uses Math.round(head). |
+| 7 | `tron.js`     | 360×360  | 30×30  | 12px | Real-time grid stepping. Two trails; first to 3 rounds wins. AI: bounded BFS + aggression (AGGRESSION=0.4) + 20% random pick. Arrows/WASD to steer. Events: game_start, near_miss (SCRAP trail perpendicular), player_scored/scrap_scored per round, scrap_lost/scrap_won on match end, game_quit. **No tap input** (mobile swipe: future item). |
+| 8 | `connect4.js` | 420×400  | 7×6    | 60px | Turn-based. Tap or ←→ + space to drop. AI: depth-4 alpha-beta minimax. near_miss on blocking 3-in-a-row or double threat. Events: game_start, near_miss, scrap_lost, scrap_won, **draw**, game_quit. |
+| 9 | `tictactoe.js`| 360×360  | 3×3    | 120px| Turn-based, reuses Game 8 scaffold. Tap or ↑↓←→ + space/enter. AI deliberately imperfect: win → block → center → corner → edge, no fork lookahead. Events: game_start, near_miss, scrap_lost, scrap_won, **draw**, game_quit. |
 
-**Events unchanged** from original matrix implementations. `near_miss` in single-player games = "life lost but not last".
+`near_miss` semantics by game type:
+- Real-time single-player (pong/snake/etc.): life lost but not last.
+- Tron: SCRAP trail or border immediately perpendicular to player's head.
+- Connect Four: either side blocked the other's three-in-a-row or created a double threat.
+- Tic-Tac-Toe: either side blocked the other's two-in-a-row.
 
 ### Test counts (frontend vitest)
 
-**80 tests across 6 test files** (19 pong, 12 snake, 13 breakout, 12 invaders, 12 tetris, 12 frogger). All pass headless (`environment: 'node'`). Canvas render path not pixel-tested — tests cover logic and emitted events only.
+**148 tests across 9 test files** (19 pong, 12 snake, 13 breakout, 12 invaders, 12 tetris, 12 frogger, 17 tron, 23 connect4, 28 tictactoe). All pass headless (`environment: 'node'`). Canvas render path not pixel-tested — tests cover logic and emitted events only.
 
 **Integration pending**: wire the arcade into the main SCRAP UI — probably via a trigger phrase or `/games` command in chat that swaps the face matrix panel for the GameCanvas.
 
 ## Roadmap (priority order)
 
-1. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, etc.) to SCRAP's personality responses. All 6 games on canvas renderer, sandbox cycling works, dot renderer retired.
+1. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, `near_miss`, `draw`, etc.) to SCRAP's personality responses. All 9 games on canvas renderer (6 real-time + 3 adversarial turn-based), sandbox cycling works, dot renderer retired.
 2. **Backlog**:
    - Chunk-1 ranking: chunk-0 injection helps identity queries, but second-chunk answers (e.g. biographical details in the second paragraph) can still rank poorly — may need a soft positional prior.
    - PDF document mode: load a user-supplied PDF as a session-scoped knowledge base (in addition to or instead of the always-on wiki KBs).
