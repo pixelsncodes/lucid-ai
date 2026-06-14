@@ -1,25 +1,21 @@
-import { OFF, DIM, LIT } from '../constants'
+// ── Canvas Snake ──────────────────────────────────────────────────────────────
+// Classic white-on-black. Renders via render(ctx, {w, h}); tick() is logic only.
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 
-const COLS = 24
-const ROWS = 14
-const PLAY_TOP = 1        // row 0 = score HUD
+const COLS     = 24
+const ROWS     = 14
+const PLAY_TOP = 1        // row 0 = score pip strip
 const PLAY_BOT = ROWS - 1
+
+const LOGICAL_W = 480
+const LOGICAL_H = 280
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 
-const TICK_INTERVAL_INIT = 8   // game-ticks per snake step (60fps → ~7.5 steps/sec)
-const TICK_INTERVAL_MIN  = 4   // max speed (15 steps/sec)
+const TICK_INTERVAL_INIT = 8    // game-ticks per snake step (60fps → ~7.5 steps/sec)
+const TICK_INTERVAL_MIN  = 4    // max speed (15 steps/sec)
 const COUNTDOWN_STEP_MS  = 800
-
-// ── Digit bitmaps (5×5, same format as pong.js) ───────────────────────────────
-
-const DIGITS = {
-  3: ['#####', '....#', '#####', '....#', '#####'],
-  2: ['#####', '....#', '#####', '#....', '#####'],
-  1: ['..#..', '..#..', '..#..', '..#..', '..#..'],
-}
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
@@ -40,15 +36,12 @@ export function createSnake() {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v }
-
   function randomFood() {
     for (let attempt = 0; attempt < 400; attempt++) {
       const x = Math.floor(Math.random() * COLS)
       const y = PLAY_TOP + Math.floor(Math.random() * (PLAY_BOT - PLAY_TOP + 1))
       if (!snake.some(s => s.x === x && s.y === y)) return { x, y }
     }
-    // Fallback: first empty cell (shouldn't be reached in practice)
     for (let y = PLAY_TOP; y <= PLAY_BOT; y++)
       for (let x = 0; x < COLS; x++)
         if (!snake.some(s => s.x === x && s.y === y)) return { x, y }
@@ -76,50 +69,13 @@ export function createSnake() {
     api.emit('game_start', { game: 'snake' })
   }
 
-  // ── Drawing ────────────────────────────────────────────────────────────────
-
-  function dot(c, r, state) { api.setDot(c, r, state) }
-
-  function drawHUD() {
-    const lit = Math.min(score, COLS)
-    for (let i = 0; i < COLS; i++) dot(i, 0, i < lit ? LIT : DIM)
-  }
-
-  function drawSnake() {
-    for (let i = 0; i < snake.length; i++) {
-      const s = snake[i]
-      if (s.y < PLAY_TOP) continue
-      dot(s.x, s.y, i === 0 ? LIT : DIM)
-    }
-  }
-
-  function drawFood() {
-    const show = Math.floor(foodBlink / 15) % 2 === 0
-    if (show) dot(food.x, food.y, LIT)
-  }
-
-  function drawDigit(n) {
-    const bm = DIGITS[n]
-    if (!bm) return
-    const startCol = Math.floor((COLS - 10) / 2)
-    const startRow = Math.floor(PLAY_TOP + (PLAY_BOT - PLAY_TOP + 1 - 10) / 2)
-    for (let r = 0; r < 5; r++)
-      for (let c = 0; c < 5; c++)
-        if (bm[r][c] === '#') {
-          dot(startCol + c * 2,     startRow + r * 2,     LIT)
-          dot(startCol + c * 2 + 1, startRow + r * 2,     LIT)
-          dot(startCol + c * 2,     startRow + r * 2 + 1, LIT)
-          dot(startCol + c * 2 + 1, startRow + r * 2 + 1, LIT)
-        }
-  }
-
   // ── Physics ────────────────────────────────────────────────────────────────
 
   function step() {
     // Apply queued direction (reject 180° reversal)
     if (!(nextDir.x === -dir.x && nextDir.y === -dir.y)) dir = { ...nextDir }
 
-    const head   = snake[0]
+    const head    = snake[0]
     const newHead = { x: head.x + dir.x, y: head.y + dir.y }
 
     // Wall collision
@@ -146,13 +102,71 @@ export function createSnake() {
     api.emit('scrap_won', { score, length: snake.length })
   }
 
+  // ── Rendering ─────────────────────────────────────────────────────────────
+
+  function render(ctx, { w, h }) {
+    const cellW = w / COLS
+    const cellH = h / ROWS
+
+    // Background
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, w, h)
+
+    // Score pip strip (row 0) — one pip per point earned
+    const lit = Math.min(score, COLS)
+    for (let i = 0; i < COLS; i++) {
+      ctx.fillStyle = i < lit ? '#fff' : 'rgba(255,255,255,0.1)'
+      ctx.fillRect(i * cellW + 1, 1, cellW - 2, cellH - 2)
+    }
+
+    // Snake segments
+    for (let i = 0; i < snake.length; i++) {
+      const s = snake[i]
+      const alive = phase !== 'dead'
+      ctx.fillStyle = alive
+        ? (i === 0 ? '#fff' : 'rgba(255,255,255,0.7)')
+        : 'rgba(255,255,255,0.22)'
+      ctx.fillRect(s.x * cellW + 1, s.y * cellH + 1, cellW - 2, cellH - 2)
+    }
+
+    // Food (blinking — same 15-tick cadence as before)
+    if (phase !== 'dead' && Math.floor(foodBlink / 15) % 2 === 0) {
+      const m = cellW * 0.2
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(food.x * cellW + m, food.y * cellH + m, cellW - m * 2, cellH - m * 2)
+    }
+
+    // Countdown overlay
+    if (phase === 'countdown') {
+      ctx.fillStyle = '#fff'
+      ctx.font = '72px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(String(countdownN), w / 2, h / 2)
+    }
+
+    // Game-over screen
+    if (phase === 'dead') {
+      ctx.fillStyle = '#fff'
+      ctx.font = '40px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('GAME OVER', w / 2, h / 2 - 24)
+      ctx.font = '16px monospace'
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillText('space to restart', w / 2, h / 2 + 20)
+    }
+  }
+
   // ── Contract ────────────────────────────────────────────────────────────────
 
   return {
     meta: {
-      id:       'snake',
-      name:     'SNAKE',
-      gridSize: { cols: COLS, rows: ROWS },
+      id:            'snake',
+      name:          'SNAKE',
+      renderer:      'canvas',
+      logicalWidth:  LOGICAL_W,
+      logicalHeight: LOGICAL_H,
     },
 
     init(_api) {
@@ -192,33 +206,17 @@ export function createSnake() {
           countdownN--
           if (countdownN <= 0) { phase = 'playing'; break }
         }
-        api.clearGrid()
-        drawHUD()
-        drawSnake()
-        drawFood()
-        if (phase === 'countdown') drawDigit(countdownN)
         return
       }
 
       if (phase === 'playing') {
         tickAccum++
         if (tickAccum >= tickInterval) { tickAccum = 0; step() }
-        if (phase !== 'dead') {
-          api.clearGrid()
-          drawHUD()
-          drawSnake()
-          drawFood()
-        }
-        return
-      }
-
-      if (phase === 'dead') {
-        api.clearGrid()
-        drawHUD()
-        for (const s of snake) dot(s.x, s.y, DIM)
         return
       }
     },
+
+    render,
 
     destroy() { api = null },
 

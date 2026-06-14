@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createSnake } from './snake.js'
 
+// Canvas snake — logical constants (must match snake.js)
+const LOGICAL_W = 480
+const LOGICAL_H = 280
+
+// Mock API — canvas games only need emit; no setDot/clearGrid.
 function mockApi() {
   const events = []
   return {
-    setDot: vi.fn(),
-    clearGrid: vi.fn(),
     emit: vi.fn((name, data) => events.push({ name, data: data ?? null })),
     events,
   }
@@ -21,7 +24,7 @@ function oneStep(game, steps = 1) {
     for (let t = 0; t < 8; t++) game.tick(16.67)
 }
 
-describe('snake', () => {
+describe('snake (canvas)', () => {
   let api, game
 
   beforeEach(() => {
@@ -35,6 +38,23 @@ describe('snake', () => {
     api.emit.mockClear()
   })
 
+  // ── Meta ──────────────────────────────────────────────────────────────────
+
+  it('meta.renderer is canvas', () => {
+    expect(game.meta.renderer).toBe('canvas')
+  })
+
+  it('meta.logicalWidth / logicalHeight match 480×280', () => {
+    expect(game.meta.logicalWidth).toBe(LOGICAL_W)
+    expect(game.meta.logicalHeight).toBe(LOGICAL_H)
+  })
+
+  it('render method exists', () => {
+    expect(typeof game.render).toBe('function')
+  })
+
+  // ── Startup ───────────────────────────────────────────────────────────────
+
   it('emits game_start on init', () => {
     const g = createSnake()
     const a = mockApi()
@@ -42,16 +62,15 @@ describe('snake', () => {
     expect(a.events.some(e => e.name === 'game_start')).toBe(true)
   })
 
+  // ── Game logic ────────────────────────────────────────────────────────────
+
   it('180-degree reversal rejected: right→left does not kill snake', () => {
-    // Snake starts facing right. Attempting to reverse to left should be silently dropped.
     game.input({ type: 'keydown', key: 'ArrowLeft' })
     oneStep(game)
-    // Snake moved right without dying — no scrap_won
     expect(api.events.some(e => e.name === 'scrap_won')).toBe(false)
   })
 
   it('eating food emits player_scored with score=1', () => {
-    // Place food one step ahead of the snake head (which starts facing right)
     const head = game._getSnakeHead()
     game._setFood(head.x + 1, head.y)
     oneStep(game)
@@ -68,27 +87,16 @@ describe('snake', () => {
   })
 
   it('self collision emits scrap_won', () => {
-    // Place a 5-cell snake in a U shape where the head is heading into its own body.
-    // Layout (facing right, head at col 3):
-    //   row 5: [5,5][4,5][3,5] ← body (cols 3-5)
-    //   row 6: [5,6][5,5] — but we build via _setSnake directly:
-    //   snake = [(3,5),(3,6),(4,6),(5,6),(5,5)] facing right
-    //   Next step right: head → (4,5) which IS in the body at index 2 of the original array…
-    //   Actually let's trace: body is [(3,5),(3,6),(4,6),(5,6),(5,5)].
-    //   Head (3,5) moves right → (4,5). Is (4,5) in snake? No.
-    //   Need: head = (4,5) already positioned, facing right → (5,5) which IS in snake[4].
     game._setSnake(
       [{ x:4,y:5 },{ x:3,y:5 },{ x:3,y:6 },{ x:4,y:6 },{ x:5,y:6 },{ x:5,y:5 }],
       { x:1, y:0 },
     )
-    game._setFood(0, 13)  // food far away so it won't interfere
-    oneStep(game)  // head moves right to (5,5) which is snake[5] → death
+    game._setFood(0, 13)
+    oneStep(game)
     expect(api.events.some(e => e.name === 'scrap_won')).toBe(true)
   })
 
   it('wall collision emits scrap_won', () => {
-    // Snake starts at x=12 facing right; right wall is at x=24 (COLS).
-    // 12 steps forward (x=24 >= COLS) = collision.
     oneStep(game, 12)
     expect(api.events.some(e => e.name === 'scrap_won')).toBe(true)
   })
