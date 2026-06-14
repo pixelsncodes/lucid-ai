@@ -1,13 +1,19 @@
-import { OFF, DIM, LIT } from '../constants'
+// ── Canvas Tetris ─────────────────────────────────────────────────────────────
+// Classic white-on-black portrait layout. Renders via render(ctx, {w, h});
+// tick() is pure logic. Board state uses OFF/DIM from constants so that test
+// helpers (_getBoard / _setBoard) work identically to the matrix version.
+
+import { OFF, DIM } from '../constants'
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 
 const COLS = 10
 const ROWS = 20
 
+const LOGICAL_W = 240   // portrait — 10 cols × 24 px
+const LOGICAL_H = 480   // portrait — 20 rows × 24 px
+
 // ── Pieces ────────────────────────────────────────────────────────────────────
-// Each piece: array of rotation states; each state: array of [col, row] offsets
-// from bounding-box top-left. Bounding box size determines spawn centering.
 
 const PIECES = [
   // 0 = I (size 4)
@@ -56,15 +62,15 @@ const PIECE_SIZES = [4, 2, 3, 3, 3, 3, 3]
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
 
-const LINE_SCORES  = [0, 40, 100, 300, 1200]  // Tetris classic scoring
-const LEVEL_LINES  = 10                         // lines per level
+const LINE_SCORES  = [0, 40, 100, 300, 1200]
+const LEVEL_LINES  = 10
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 
-const FALL_TICKS_INIT = 45   // ticks per gravity drop at level 1
-const FALL_TICKS_MIN  = 6    // fastest (level ~7+)
-const SOFT_DROP_TICKS = 2    // ticks per drop when ArrowDown held
-const LOCK_DELAY      = 30   // ticks before piece locks after touching ground
+const FALL_TICKS_INIT   = 45
+const FALL_TICKS_MIN    = 6
+const SOFT_DROP_TICKS   = 2
+const LOCK_DELAY        = 30
 const COUNTDOWN_STEP_MS = 800
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -72,32 +78,26 @@ const COUNTDOWN_STEP_MS = 800
 export function createTetris() {
   let api = null
 
-  // Board: board[row][col] = LIT|DIM|OFF
   let board = []
 
-  // Active piece
-  let piece    = 0    // index into PIECES
+  let piece    = 0
   let rotation = 0
-  let px       = 3    // bounding-box col (top-left)
-  let py       = 0    // bounding-box row (top-left)
+  let px       = 3
+  let py       = 0
 
   let nextPiece = 0
 
-  // Timing
-  let fallTimer  = 0    // ticks since last gravity step
-  let lockTimer  = 0    // ticks the piece has been touching the ground
+  let fallTimer  = 0
+  let lockTimer  = 0
   let touching   = false
 
-  // Progression
   let totalLines = 0
   let level      = 1
   let score      = 0
   let fallTicks  = FALL_TICKS_INIT
 
-  // Input flags
   let softDrop   = false
 
-  // Phase
   let phase      = 'idle'
   let phaseTimer = 0
   let countdownN = 3
@@ -135,7 +135,6 @@ export function createTetris() {
     lockTimer  = 0
 
     if (collides(piece, rotation, px, py)) {
-      // Can't place new piece → game over
       phase = 'gameover'
       api.emit('scrap_won', { score, totalLines })
     } else {
@@ -172,7 +171,7 @@ export function createTetris() {
         board.splice(r, 1)
         board.unshift(new Array(COLS).fill(OFF))
         cleared++
-        r++  // re-check same row index (now contains what was above)
+        r++
       }
     }
     if (cleared > 0) {
@@ -181,22 +180,6 @@ export function createTetris() {
       level       = Math.floor(totalLines / LEVEL_LINES) + 1
       fallTicks   = Math.max(FALL_TICKS_MIN, FALL_TICKS_INIT - (level - 1) * 5)
       api.emit('player_scored', { lines: cleared, totalLines, level, score })
-    }
-  }
-
-  // ── Drawing ────────────────────────────────────────────────────────────────
-
-  function dot(c, r, state) { api.setDot(c, r, state) }
-
-  function drawBoard() {
-    for (let r = 0; r < ROWS; r++)
-      for (let c = 0; c < COLS; c++)
-        dot(c, r, board[r][c])
-  }
-
-  function drawPiece(state = LIT) {
-    for (const [c, r] of absCells(piece, rotation, px, py)) {
-      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) dot(c, r, state)
     }
   }
 
@@ -224,13 +207,96 @@ export function createTetris() {
     }
   }
 
+  // ── Rendering ─────────────────────────────────────────────────────────────
+
+  function render(ctx, { w, h }) {
+    const cellW = w / COLS
+    const cellH = h / ROWS
+
+    // Background
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, w, h)
+
+    // Well border (subtle outline)
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1)
+
+    // Locked board cells
+    ctx.fillStyle = '#fff'
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (board[r][c] !== OFF) {
+          ctx.fillStyle = 'rgba(255,255,255,0.8)'
+          ctx.fillRect(c * cellW + 1, r * cellH + 1, cellW - 2, cellH - 2)
+        }
+      }
+    }
+
+    // Active piece (bright white)
+    if (phase === 'playing' || phase === 'paused') {
+      const alpha = phase === 'paused' ? 0.35 : 1
+      ctx.fillStyle = `rgba(255,255,255,${alpha})`
+      for (const [c, r] of absCells(piece, rotation, px, py)) {
+        if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+          ctx.fillRect(c * cellW + 1, r * cellH + 1, cellW - 2, cellH - 2)
+        }
+      }
+    }
+
+    // HUD — score / level at bottom overlay
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'
+    ctx.font = '11px monospace'
+    ctx.textBaseline = 'bottom'
+    ctx.textAlign = 'left'
+    ctx.fillText(`LV ${level}`, 4, h - 2)
+    ctx.textAlign = 'right'
+    ctx.fillText(`${score}`, w - 4, h - 2)
+
+    // Countdown overlay
+    if (phase === 'countdown') {
+      ctx.fillStyle = '#fff'
+      ctx.font = '72px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(String(countdownN), w / 2, h / 2)
+    }
+
+    // Pause overlay
+    if (phase === 'paused') {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'
+      ctx.fillRect(0, 0, w, h)
+      ctx.fillStyle = '#fff'
+      ctx.font = '28px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('PAUSED', w / 2, h / 2)
+    }
+
+    // Game-over screen
+    if (phase === 'gameover') {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'
+      ctx.fillRect(0, 0, w, h)
+      ctx.fillStyle = '#fff'
+      ctx.font = '28px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('GAME OVER', w / 2, h / 2 - 22)
+      ctx.font = '13px monospace'
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillText('space to restart', w / 2, h / 2 + 16)
+    }
+  }
+
   // ── Contract ────────────────────────────────────────────────────────────────
 
   return {
     meta: {
-      id:       'tetris',
-      name:     'TETRIS',
-      gridSize: { cols: COLS, rows: ROWS },
+      id:            'tetris',
+      name:          'TETRIS',
+      renderer:      'canvas',
+      logicalWidth:  LOGICAL_W,
+      logicalHeight: LOGICAL_H,
     },
 
     init(_api) {
@@ -264,7 +330,6 @@ export function createTetris() {
           else if (!collides(piece, newRot, px + 1, py)) { px++; rotation = newRot; lockTimer = 0 }
         }
         if (key === ' ') {
-          // Hard drop
           while (!collides(piece, rotation, px, py + 1)) py++
           lockPiece()
         }
@@ -283,32 +348,16 @@ export function createTetris() {
           countdownN--
           if (countdownN <= 0) { phase = 'playing'; spawnPiece(); break }
         }
-        api.clearGrid()
-        drawBoard()
         return
       }
 
       if (phase === 'playing') {
         tickPlaying()
-        api.clearGrid()
-        drawBoard()
-        if (phase === 'playing') drawPiece()
-        return
-      }
-
-      if (phase === 'paused') {
-        api.clearGrid()
-        drawBoard()
-        drawPiece(DIM)
-        return
-      }
-
-      if (phase === 'gameover') {
-        api.clearGrid()
-        drawBoard()
         return
       }
     },
+
+    render,
 
     destroy() { api = null },
 
