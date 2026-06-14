@@ -8,6 +8,7 @@ import { createBreakout } from './games/breakout'
 import { createInvaders } from './games/invaders'
 import { createTetris }   from './games/tetris'
 import { createFrogger }  from './games/frogger'
+import { createTron }     from './games/tron'
 
 const MAX_EVENTS = 24
 
@@ -18,6 +19,7 @@ const GAME_FACTORIES = [
   createInvaders,
   createTetris,
   createFrogger,
+  createTron,
 ]
 
 const GAME_HELP = {
@@ -27,6 +29,7 @@ const GAME_HELP = {
   invaders: '←→ move · Space fire · Esc pause',
   tetris:   '←→ move · ↑ rotate · ↓ soft drop · Space hard drop · Esc pause',
   frogger:  '↑↓←→ hop · Space restart',
+  tron:     '↑↓←→ or WASD steer · Esc quit · first to 3 rounds',
 }
 
 export default function ArcadeSandbox() {
@@ -82,7 +85,7 @@ export default function ArcadeSandbox() {
         return
       }
 
-      if (e.type === 'keydown' && /^[1-6]$/.test(e.key)) {
+      if (e.type === 'keydown' && /^[1-9]$/.test(e.key)) {
         launchRef.current(parseInt(e.key) - 1)
         return
       }
@@ -166,7 +169,7 @@ export default function ArcadeSandbox() {
 
       <footer className="sandbox-footer">
         {help && <span>{help} &nbsp;·&nbsp; </span>}
-        <kbd>Tab</kbd> next game &nbsp;·&nbsp; <kbd>1</kbd>–<kbd>6</kbd> select
+        <kbd>Tab</kbd> next game &nbsp;·&nbsp; <kbd>1</kbd>–<kbd>9</kbd> select
       </footer>
     </div>
   )
