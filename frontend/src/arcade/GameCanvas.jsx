@@ -32,6 +32,8 @@ const GameCanvas = forwardRef(function GameCanvas(
       )
       return { ctx, w: logicalWidth, h: logicalHeight }
     },
+    // Expose the DOM element so ArcadeSandbox can read its bounding rect for tap events.
+    getCanvas() { return canvasRef.current },
   }), [logicalWidth, logicalHeight])
 
   useEffect(() => {

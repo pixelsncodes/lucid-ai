@@ -8,7 +8,8 @@ import { createBreakout } from './games/breakout'
 import { createInvaders } from './games/invaders'
 import { createTetris }   from './games/tetris'
 import { createFrogger }  from './games/frogger'
-import { createTron }     from './games/tron'
+import { createTron }       from './games/tron'
+import { createConnect4 }   from './games/connect4'
 
 const MAX_EVENTS = 24
 
@@ -20,6 +21,7 @@ const GAME_FACTORIES = [
   createTetris,
   createFrogger,
   createTron,
+  createConnect4,
 ]
 
 const GAME_HELP = {
@@ -29,7 +31,8 @@ const GAME_HELP = {
   invaders: '←→ move · Space fire · Esc pause',
   tetris:   '←→ move · ↑ rotate · ↓ soft drop · Space hard drop · Esc pause',
   frogger:  '↑↓←→ hop · Space restart',
-  tron:     '↑↓←→ or WASD steer · Esc quit · first to 3 rounds',
+  tron:      '↑↓←→ or WASD steer · Esc quit · first to 3 rounds',
+  connect4:  '←→ cursor · Space/tap drop · Esc quit',
 }
 
 export default function ArcadeSandbox() {
@@ -109,20 +112,52 @@ export default function ArcadeSandbox() {
       if (row !== null) gameRef.current?.input({ type: 'touch_y', row })
     }
 
+    // tap — convert pointer to logical {x,y} using the canvas bounding rect.
+    // Used by grid games (Connect Four, Tic-Tac-Toe) for column/cell selection.
+    // Existing games ignore tap events, so this is purely additive.
+    function toLogical(clientX, clientY) {
+      const canvas = canvasRef.current?.getCanvas()
+      if (!canvas) return null
+      const rect   = canvas.getBoundingClientRect()
+      const meta   = gameRef.current?.meta
+      const lw     = meta?.logicalWidth  ?? 640
+      const lh     = meta?.logicalHeight ?? 384
+      return {
+        x: ((clientX - rect.left) / rect.width)  * lw,
+        y: ((clientY - rect.top)  / rect.height) * lh,
+      }
+    }
+
+    function onMouseDown(e) {
+      const pos = toLogical(e.clientX, e.clientY)
+      if (pos) gameRef.current?.input({ type: 'tap', x: pos.x, y: pos.y })
+    }
+
+    function onTouchStart(e) {
+      const touch = e.touches[0] || e.changedTouches[0]
+      if (!touch) return
+      const pos = toLogical(touch.clientX, touch.clientY)
+      if (pos) gameRef.current?.input({ type: 'tap', x: pos.x, y: pos.y })
+      // Also send touch_y for paddle games
+      if (pos) gameRef.current?.input({ type: 'touch_y', row: pos.y })
+    }
+
     const arena = arenaRef.current
     window.addEventListener('keydown', onKey)
     window.addEventListener('keyup',   onKey)
     arena?.addEventListener('mousemove',  onMouseMove)
     arena?.addEventListener('mouseleave', onMouseLeave)
-    arena?.addEventListener('touchstart', onTouch, { passive: true })
-    arena?.addEventListener('touchmove',  onTouch, { passive: true })
+    arena?.addEventListener('mousedown',  onMouseDown)
+    arena?.addEventListener('touchstart', onTouchStart, { passive: true })
+    arena?.addEventListener('touchmove',  onTouch,      { passive: true })
 
     return () => {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('keyup',   onKey)
       arena?.removeEventListener('mousemove',  onMouseMove)
       arena?.removeEventListener('mouseleave', onMouseLeave)
-      arena?.removeEventListener('touchstart', onTouch)
+      arena?.removeEventListener('mousedown',  onMouseDown)
+      arena?.removeEventListener('touchstart', onTouchStart)
       arena?.removeEventListener('touchmove',  onTouch)
       consRef.current?.destroy()
     }
