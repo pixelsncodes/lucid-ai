@@ -99,76 +99,64 @@ Root causes were in FTS5 query construction (filler-word stopwords), plural/suff
 ## Test suites — must stay green
 **127 pytest** (9 files: `test_fiction_meta` 19, `test_redirect_augment` 16, `test_fiction_guard` 14, `test_entity_boost` 4, `test_normalize_reply_tag` 28, `test_jokes` 6, `test_retrieval_regression` 35, `test_stt_vad_filter` 1, `test_reranker` 4) + **23 wiki smoke checks** in `scripts/wiki_smoke_test.sh` + **17 TTS smoke checks** in `scripts/tts_smoke_test.sh`. The wiki and TTS smoke scripts hit the live backend; run them with the backend up.
 
-**46 vitest** (5 test files: snake 9, breakout 10, invaders 9, tetris 8, frogger 9, pong 1) run headless with `npm test` from `frontend/`. Added in this session.
+**80 vitest** (6 test files: pong 19, snake 12, breakout 13, invaders 12, tetris 12, frogger 12) run headless with `npm test` from `frontend/`. All test file names end in `.test.js`. Mock API is canvas-only (`emit` only; no setDot/clearGrid).
 
 Note: smoke tests emit fiction-guard probes (e.g. "What is the capital of Atlantis?") into the uvicorn log — that's expected test traffic.
 
-## Arcade track — renderer migration IN PROGRESS
+## Arcade track — canvas renderer COMPLETE (Sessions 1+2, June 2026)
 
 Standalone sandbox at `/arcade` route. Not yet wired into the main SCRAP chat UI.
 
-### Renderer system (Session 1, June 2026)
+### Renderer system
 
-The contract now supports two rendering paths via `meta.renderer`:
+All six games use `meta.renderer = 'canvas'`. The dot/matrix path has been fully retired.
 
-- **`'matrix'` (default)** — existing dot-grid renderer. Game draws via `api.setDot()` / `api.clearGrid()` inside `tick()`. Unchanged; all five matrix games stay on this path.
-- **`'canvas'`** — new Canvas 2D path. Game implements an optional `render(ctx, { w, h })` called by the console each frame after `tick()`. `ctx` is pre-scaled to logical coordinates via `setTransform`. `tick()` is pure game logic — no drawing.
-
-**New files:**
-- `GameCanvas.jsx` — `forwardRef` canvas component. DevicePixelRatio-aware: `ResizeObserver` keeps the backing store in sync with `displaySize × dpr`. `ref.getCtx()` returns `{ ctx, w, h }` with the logical-to-physical transform already applied.
-- `games/pong.test.js` — 19 tests for canvas pong (logic + events, no canvas ctx needed).
-
-**Contract additions (additive — matrix games unaffected):**
-
+**Canvas contract:**
 ```
 meta: {
-  renderer?:      'matrix' | 'canvas'   // default 'matrix'
-  logicalWidth?:  number                // canvas games only (e.g. 640)
-  logicalHeight?: number                // canvas games only (e.g. 384)
+  renderer:      'canvas'
+  logicalWidth:  number    // e.g. 640
+  logicalHeight: number    // e.g. 384
 }
 
-render?(ctx, { w, h }): void
-  // Canvas games only. Draw in logical coordinates (0..w, 0..h).
-  // Called by the console each frame after tick(). Do not call setDot.
+render(ctx, { w, h }): void
+  // Draw in logical coordinates (0..w, 0..h). ctx pre-scaled by dpr.
+  // Called once per frame after tick(). tick() is pure logic — no drawing.
 ```
 
-For canvas games, `mouse_y` / `touch_y` events deliver a logical Y coordinate (0..logicalHeight) instead of a grid row. `ArcadeSandbox.toRow()` branches on `meta.renderer` to compute the right value.
+`mouse_y` / `touch_y` events deliver a logical Y coordinate (0..logicalHeight).
+Breakout's mouse input re-maps vertical mouse position to horizontal paddle column (deviation from Pong's vertical paddle use — intentional).
 
 ### Files: `frontend/src/arcade/`
 
-- `GameGrid.jsx` — NxM dot-matrix canvas component. Imperative rendering: parent calls `ref.setDots(flat Uint8Array)` each frame to avoid 60fps React re-renders. Dot states: `0=OFF`, `1=DIM`, `2=LIT`. Uses the same visual constants as the face matrix (DOT_COLOR, DOT_SIZE 22px, DOT_GAP 14px).
-- `GameCanvas.jsx` — **NEW**. DPI-aware `<canvas>` for canvas-renderer games. `ref.getCtx()` returns `{ ctx, w, h }` with pre-applied logical-to-physical transform.
-- `gameConsole.js` — factory + **game-console contract**. Extended: accepts `getCanvasCtx` option; after each tick batch, if `game.render` and `getCanvasCtx` both exist, calls `game.render(ctx, {w, h})` instead of `onDraw(dots)`. Matrix path unchanged. Fixed timestep: 60fps / ~16.67ms tick.
-- `constants.js` — shared visual constants for matrix games (`DOT_COLOR`, `DOT_SIZE`, `DOT_GAP`, `OP_OFF/DIM/LIT`, flat-buffer `OFF/DIM/LIT`).
-- `ArcadeSandbox.jsx` / `ArcadeSandbox.css` — standalone `/arcade` route. All 6 games wired in. Tab cycles forward, Shift+Tab cycles back, keys 1–6 jump directly. Renderer-conditional: renders `<GameCanvas>` for `renderer='canvas'` games, `<GameGrid>` for matrix games. `getCanvasCtx` / `onDraw` callbacks wired accordingly.
+- `GameCanvas.jsx` — DPI-aware `<canvas>`. `ref.getCtx()` returns `{ ctx, w, h }` with pre-applied logical-to-physical transform.
+- `gameConsole.js` — factory + game-console contract. Fixed 60fps timestep; calls `game.render(ctx, {w, h})` after each tick batch. Removed: setDot, clearGrid, onDraw, dots buffer.
+- `constants.js` — board cell states only: `OFF=0`, `DIM=1`, `LIT=2` (used by tetris.js for board tracking and tetris.test.js assertions).
+- `ArcadeSandbox.jsx` / `ArcadeSandbox.css` — standalone `/arcade` route. All 6 games wired in. Tab cycles forward, Shift+Tab cycles back, keys 1–6 jump directly. Always renders `<GameCanvas>`.
+- **Removed:** `GameGrid.jsx`, `GameGrid.css` (dot-matrix renderer, retired).
 
-### Games
+### Games — all on canvas renderer
 
-- **`games/pong.js` — Game 1. CANVAS VERSION (session 1).** 640×384 logical, white-on-black. Square ball (10px), paddles (10×64, 18px from walls). Dashed center net. Monospace score top-center. Mouse Y / arrow keys move player; AI right side capped at **3.7 px/frame** so it's beatable at high rally speeds. Ball speeds up 1.035× per hit. First to 7. Esc quits (`game_quit`), Space/Enter restarts. `near_miss` fires when the ball exits past a paddle edge within 10px.
-- `games/snake.js` — Game 2. 24×14 grid, wall/self-collision = `scrap_won`, food = `player_scored`, 180° reversal blocked.
-- `games/breakout.js` — Game 3. 24×16 grid, 3 lives, 5 brick rows. Ball speed bumps on each brick. `near_miss` on paddle-edge hits, `scrap_won` on last life, `scrap_lost` on all bricks cleared. Mouse↕ remapped to horizontal paddle position.
-- `games/invaders.js` — Game 4. 24×16 grid, 5×3 army. Invasion check fires on every army step (not only on edge drops). `near_miss` on each non-final life lost, `scrap_won` on invasion or last life, `scrap_lost` on all kills.
-- `games/tetris.js` — Game 5. 10×20 grid. 7 tetrominoes, 4-rotation wall-kick, hard drop, soft drop, line scoring (classic Tetris scale × level). `player_scored` per line clear, `scrap_won` on board full.
-- `games/frogger.js` — Game 6. 16×13 grid. Frogger suits the coarse dot-matrix well because its core elements (frog, logs, cars) each occupy 1–2 dots and the traffic/river pattern reads clearly even at low resolution. Logs drift continuously (frog rides them as a float offset), cars are integer-collision. 5 lily-pad goal strip. `player_scored` per pad, `scrap_lost` when all 5 filled, `scrap_won` on last life, `near_miss` on non-final life loss.
+| Game | Logical canvas | Grid | Cell | Notes |
+|------|---------------|------|------|-------|
+| `pong.js`     | 640×384  | —      | —    | Continuous physics. Dashed net, monospace score. AI capped 3.7px/frame. |
+| `snake.js`    | 480×280  | 24×14  | 20px | Grid-logical stepping. Pip score strip row 0. Blinking food. |
+| `breakout.js` | 480×320  | 24×16  | 20px | Continuous ball/paddle. Physics in grid coords, scaled in render. |
+| `invaders.js` | 480×320  | 24×16  | 20px | Continuous bullets/bombs. Blocky invader glyphs. |
+| `tetris.js`   | 240×480  | 10×20  | 24px | Portrait. Board uses OFF/DIM. Score/level HUD overlay at bottom. |
+| `frogger.js`  | 320×260  | 16×13  | 20px | Hybrid: discrete row hops, continuous lane traffic. |
+
+**Events unchanged** from original matrix implementations. `near_miss` in single-player games = "life lost but not last".
 
 ### Test counts (frontend vitest)
 
-**65 tests across 6 test files** (19 pong canvas, 9 snake, 10 breakout, 9 invaders, 8 tetris, 9 frogger). All pass headless with mock GameAPI (`environment: 'node'`). Canvas render path is not tested (not pixel-testable) — tests cover game state transitions and emitted events only.
+**80 tests across 6 test files** (19 pong, 12 snake, 13 breakout, 12 invaders, 12 tetris, 12 frogger). All pass headless (`environment: 'node'`). Canvas render path not pixel-tested — tests cover logic and emitted events only.
 
-### Session 2 scope (pending human review)
-
-Port the remaining five matrix games (snake, breakout, invaders, tetris, frogger) to the canvas renderer. Pattern is established by pong: keep game logic in `tick()`, move all drawing to `render(ctx, {w,h})`, update `meta.renderer = 'canvas'`.
-
-**Contract extensions from implementation:**
-- `_setSnake/setBall/setBullet/setFrog` pattern: test helpers mutate internal state directly (not via copies) so that physics checks in the same tick see the updated state. This is the established pattern for all subsequent games.
-- Mouse_y remapped to horizontal axis in Breakout (row fraction → paddle column) — deviation from pong's vertical use. Noted in per-game help text.
-- `near_miss` in single-player games = "life lost but not last" (not a near-miss on a paddle). Consistent across Breakout, Invaders, Frogger.
-
-**Integration pending**: wire the arcade into the main SCRAP UI — probably via a trigger phrase or `/games` command in chat that swaps the face matrix panel for the GameGrid/GameCanvas.
+**Integration pending**: wire the arcade into the main SCRAP UI — probably via a trigger phrase or `/games` command in chat that swaps the face matrix panel for the GameCanvas.
 
 ## Roadmap (priority order)
 
-1. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, etc.) to SCRAP's personality responses. All 6 games complete and tested; sandbox cycling works.
+1. **Arcade integration** — wire arcade into main chat UI (trigger phrase or `/games` command), connect semantic game events (`scrap_scored`, `scrap_won`, etc.) to SCRAP's personality responses. All 6 games on canvas renderer, sandbox cycling works, dot renderer retired.
 2. **Backlog**:
    - Chunk-1 ranking: chunk-0 injection helps identity queries, but second-chunk answers (e.g. biographical details in the second paragraph) can still rank poorly — may need a soft positional prior.
    - PDF document mode: load a user-supplied PDF as a session-scoped knowledge base (in addition to or instead of the always-on wiki KBs).
