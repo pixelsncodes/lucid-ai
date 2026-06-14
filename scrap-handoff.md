@@ -1,4 +1,19 @@
-# SCRAP — Session Handoff (June 12, 2026)
+# SCRAP — Session Handoff (June 13, 2026)
+
+## Next session — start here (June 14, 2026)
+
+**Playtesting (not yet done)**
+- Manual playtest of all 4 recently-changed games: Breakout (post f204621 physics fix), Tron, Connect Four, Tic-Tac-Toe. Golden path + edge cases. Monitor for event emission and phase transitions.
+- Flag: Tron `near_miss` fires when SCRAP trail or border is immediately perpendicular to the player's heading. The original intent was "wall-proximity" (how close the player is to the walls); the shipped implementation is perpendicular-cell detection. Confirm the feel is right during playtest — if not, revise the detection logic and update the near_miss semantics note below.
+
+**Outstanding from the VAD session (7 manual checks)**
+- The 7 manual browser VAD checks listed in the VAD session notes were never executed. Run them before any VAD-adjacent changes.
+
+**Two roadmap items ready to start**
+1. **Arcade-into-chat integration** — wire the arcade semantic events (`scrap_scored`, `scrap_won`, `near_miss`, `draw`) to SCRAP's personality responses. All 9 games are on canvas renderer, sandbox cycling works; no backend changes required for the wiring itself.
+2. **Chunk-1 ranking** — before any code, run a `/debug/retrieval` pass to check whether the cross-encoder reranker has already shifted second-chunk rankings. The reranker may have closed this gap; measure first.
+
+---
 
 ## Project snapshot
 - Project: **SCRAP** (formerly Lucid AI) — local/offline voice-first assistant.
@@ -156,6 +171,7 @@ All other events (`game_start`, `near_miss`, `player_scored`, `scrap_scored`, `s
 - `gameConsole.js` — factory + game-console contract. Fixed 60fps timestep; calls `game.render(ctx, {w, h})` after each tick batch.
 - `constants.js` — board cell states only: `OFF=0`, `DIM=1`, `LIT=2` (used by tetris.js / tetris.test.js).
 - `ArcadeSandbox.jsx` / `ArcadeSandbox.css` — standalone `/arcade` route. All 9 games wired in. Tab cycles forward, Shift+Tab cycles back, keys 1–9 jump directly. Always renders `<GameCanvas>`.
+- `games/` — subdirectory containing all 9 game modules (`pong.js`, `snake.js`, `breakout.js`, `invaders.js`, `tetris.js`, `frogger.js`, `tron.js`, `connect4.js`, `tictactoe.js`) and their corresponding `.test.js` files.
 - **Removed:** `GameGrid.jsx`, `GameGrid.css` (dot-matrix renderer, retired Session 2).
 
 ### Games — all on canvas renderer
@@ -164,11 +180,11 @@ All other events (`game_start`, `near_miss`, `player_scored`, `scrap_scored`, `s
 |---|------|---------------|------|------|-------|
 | 1 | `pong.js`     | 640×384  | —      | —    | Continuous physics. Dashed net, monospace score. AI capped 3.7px/frame. |
 | 2 | `snake.js`    | 480×280  | 24×14  | 20px | Grid-logical stepping. Pip score strip row 0. Blinking food. |
-| 3 | `breakout.js` | 480×320  | 24×16  | 20px | Continuous ball/paddle. PADDLE_TOP=PADDLE_ROW+0.35; BALL_RADIUS_CELLS=0.4; brick AABB min-overlap axis. |
+| 3 | `breakout.js` | 480×320  | 24×16  | 20px | Continuous ball/paddle. PADDLE_TOP=PADDLE_ROW+0.35; BALL_RADIUS_CELLS=0.2 (4px sprite in 20px cell); symmetric radius-aware walls; bricks cols 0..23 (5 rows × 24 = 120); brick AABB min-overlap axis bounce. Keyboard-only (mouse control removed). |
 | 4 | `invaders.js` | 480×320  | 24×16  | 20px | Continuous bullets/bombs. INV_COLS=8, INV_ROWS=4, INV_START_C=4. Player continuous float; bomb/bullet use Math.round(x). |
 | 5 | `tetris.js`   | 240×480  | 10×20  | 24px | Portrait. Board uses OFF/DIM. Score/level HUD at bottom. |
 | 6 | `frogger.js`  | 320×260  | 16×13  | 20px | Hybrid discrete/continuous. findCar uses Math.round(head). |
-| 7 | `tron.js`     | 360×360  | 30×30  | 12px | Real-time grid stepping. Two trails; first to 3 rounds wins. AI: bounded BFS + aggression (AGGRESSION=0.4) + 20% random pick. Arrows/WASD to steer. Events: game_start, near_miss (SCRAP trail perpendicular), player_scored/scrap_scored per round, scrap_lost/scrap_won on match end, game_quit. **No tap input** (mobile swipe: future item). |
+| 7 | `tron.js`     | 360×360  | 30×30  | 12px | Real-time grid stepping. Two trails; first to 3 rounds wins. AI: bounded BFS + aggression (AGGRESSION=0.4) + 20% random pick. Arrows/WASD to steer. Events: game_start, near_miss (SCRAP trail or border immediately perpendicular to player), player_scored/scrap_scored per round, scrap_lost/scrap_won on match end, game_quit. **No tap input** (mobile swipe: future item). |
 | 8 | `connect4.js` | 420×400  | 7×6    | 60px | Turn-based. Tap or ←→ + space to drop. AI: depth-4 alpha-beta minimax. near_miss on blocking 3-in-a-row or double threat. Events: game_start, near_miss, scrap_lost, scrap_won, **draw**, game_quit. |
 | 9 | `tictactoe.js`| 360×360  | 3×3    | 120px| Turn-based, reuses Game 8 scaffold. Tap or ↑↓←→ + space/enter. AI deliberately imperfect: win → block → center → corner → edge, no fork lookahead. Events: game_start, near_miss, scrap_lost, scrap_won, **draw**, game_quit. |
 
