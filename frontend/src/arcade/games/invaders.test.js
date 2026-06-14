@@ -82,7 +82,8 @@ describe('invaders (canvas)', () => {
   // ── Scoring / events ──────────────────────────────────────────────────────
 
   it('bullet killing an invader emits player_scored', () => {
-    game._setBullet(2, 2.1, true)
+    // INV_START_C=4, INV_SPACING=2 → invCol(0)=4; invRow(0)=INV_START_R=2
+    game._setBullet(4, 2.1, true)
     game.tick(16.67)
     expect(api.events.some(e => e.name === 'player_scored')).toBe(true)
     expect(game._getKills()).toBe(1)
@@ -90,7 +91,7 @@ describe('invaders (canvas)', () => {
 
   it('all invaders killed emits scrap_lost', () => {
     game._killAllBut(0, 0)
-    game._setBullet(2, 2.1, true)
+    game._setBullet(4, 2.1, true)
     game.tick(16.67)
     expect(api.events.some(e => e.name === 'scrap_lost')).toBe(true)
   })

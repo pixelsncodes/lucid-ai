@@ -6,10 +6,10 @@
 
 const COLS         = 24
 const ROWS         = 16
-const INV_COLS     = 5
-const INV_ROWS     = 3
-const INV_SPACING  = 4
-const INV_START_C  = 2
+const INV_COLS     = 8
+const INV_ROWS     = 4
+const INV_SPACING  = 2
+const INV_START_C  = 4
 const INV_START_R  = 2
 const PLAYER_ROW   = ROWS - 2     // row 14
 const LIVES_ROW    = ROWS - 1     // row 15
@@ -25,6 +25,7 @@ const INV_STEP_MIN   = 0.15
 const BULLET_SPEED   = 10
 const BOMB_SPEED     = 3.5
 const BOMB_INTERVAL  = 2.0
+const PLAYER_SPEED   = 11    // cells/sec — crosses ~24-col field in ~2 s
 const LIVES_INIT     = 3
 const COUNTDOWN_STEP_MS = 800
 
@@ -130,8 +131,8 @@ export function createInvaders() {
   function tickPlaying(dt) {
     const dtS = dt / 1000
 
-    // Player movement
-    player.x = clamp(player.x + playerVX * Math.round(14 * dtS + 0.5), 0, COLS - 1)
+    // Player movement — continuous float position; no more per-frame rounding
+    player.x = clamp(player.x + playerVX * PLAYER_SPEED * dtS, 0, COLS - 1)
 
     // Bullet
     if (bullet.active) {
@@ -177,7 +178,7 @@ export function createInvaders() {
 
       const bx = Math.round(bombs[i].x), by = Math.round(bombs[i].y)
 
-      if (bx === player.x && by === PLAYER_ROW) {
+      if (bx === Math.round(player.x) && by === PLAYER_ROW) {
         bombs.splice(i, 1)
         playerHit()
         return
@@ -364,7 +365,7 @@ export function createInvaders() {
         if (key === 'ArrowLeft')  playerVX = -1
         if (key === 'ArrowRight') playerVX =  1
         if (key === ' ' && phase === 'playing' && !bullet.active) {
-          bullet.x      = player.x
+          bullet.x      = Math.round(player.x)
           bullet.y      = PLAYER_ROW - 1
           bullet.active = true
         }

@@ -126,7 +126,9 @@ export function createFrogger() {
       const len  = LANES[li].items[ii].len
       const head = lanePositions[li][ii].col
       for (const base of [head, head - COLS, head + COLS]) {
-        const startC = Math.floor(base)
+        // Math.round aligns the collision grid with the render position;
+        // Math.floor caused up-to-1-cell offset between visual and hit detection.
+        const startC = Math.round(base)
         for (let k = 0; k < len; k++) {
           if ((startC + k + COLS) % COLS === (intCol + COLS) % COLS) return { li, ii }
         }
