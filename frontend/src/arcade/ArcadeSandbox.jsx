@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import './ArcadeSandbox.css'
-import GameGrid   from './GameGrid'
 import GameCanvas from './GameCanvas'
 import { createConsole } from './gameConsole'
 import { createPong }     from './games/pong'
@@ -31,7 +30,6 @@ const GAME_HELP = {
 }
 
 export default function ArcadeSandbox() {
-  const gridRef    = useRef(null)
   const canvasRef  = useRef(null)
   const arenaRef   = useRef(null)
   const consRef    = useRef(null)
@@ -53,17 +51,8 @@ export default function ArcadeSandbox() {
     gameRef.current = game
     setGameMeta(game.meta)
 
-    const renderer = game.meta.renderer ?? 'matrix'
-
     const cons = createConsole(game, {
-      onDraw:
-        renderer === 'matrix'
-          ? (dots) => gridRef.current?.setDots(dots)
-          : undefined,
-      getCanvasCtx:
-        renderer === 'canvas'
-          ? () => canvasRef.current?.getCtx() ?? null
-          : undefined,
+      getCanvasCtx: () => canvasRef.current?.getCtx() ?? null,
       onEvent: (e) => setEvents(prev => [e, ...prev].slice(0, MAX_EVENTS)),
     })
     consRef.current = cons
@@ -80,11 +69,7 @@ export default function ArcadeSandbox() {
       const rect = arenaRef.current.getBoundingClientRect()
       const frac = (clientY - rect.top) / rect.height
       const game = gameRef.current
-      // Canvas games use logical px; matrix games use grid rows.
-      if ((game?.meta?.renderer ?? 'matrix') === 'canvas') {
-        return frac * (game.meta.logicalHeight ?? 384)
-      }
-      return frac * (game?.meta?.gridSize?.rows ?? 14)
+      return frac * (game?.meta?.logicalHeight ?? 384)
     }
 
     function onKey(e) {
@@ -141,9 +126,6 @@ export default function ArcadeSandbox() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const renderer = gameMeta?.renderer ?? 'matrix'
-  const isCanvas = renderer === 'canvas'
-  const { cols = 24, rows = 14 } = gameMeta?.gridSize ?? {}
   const help = GAME_HELP[gameMeta?.id] ?? ''
 
   return (
@@ -155,23 +137,13 @@ export default function ArcadeSandbox() {
 
       <div className="sandbox-body">
         <div className="sandbox-arena" ref={arenaRef}>
-          {isCanvas ? (
-            <GameCanvas
-              ref={canvasRef}
-              logicalWidth={gameMeta?.logicalWidth  ?? 640}
-              logicalHeight={gameMeta?.logicalHeight ?? 384}
-              cssWidth={gameMeta?.logicalWidth  ?? 640}
-              cssHeight={gameMeta?.logicalHeight ?? 384}
-            />
-          ) : (
-            <GameGrid
-              ref={gridRef}
-              cols={cols}
-              rows={rows}
-              dotSize={10}
-              gap={5}
-            />
-          )}
+          <GameCanvas
+            ref={canvasRef}
+            logicalWidth={gameMeta?.logicalWidth   ?? 640}
+            logicalHeight={gameMeta?.logicalHeight ?? 384}
+            cssWidth={gameMeta?.logicalWidth   ?? 640}
+            cssHeight={gameMeta?.logicalHeight ?? 384}
+          />
         </div>
 
         <aside className="sandbox-events">

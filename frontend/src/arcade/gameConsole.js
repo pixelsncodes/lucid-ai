@@ -7,30 +7,26 @@
  *   meta: {
  *     id: string,
  *     name: string,
- *     renderer?: 'matrix' | 'canvas',   // default 'matrix'
- *     // matrix games also require:
- *     gridSize: { cols: number, rows: number },
- *     // canvas games also require:
+ *     renderer: 'canvas',
  *     logicalWidth: number,
  *     logicalHeight: number,
  *   },
  *
  *   init(api: GameAPI): void,
- *   // Called once at startup. Matrix games draw their first frame here.
- *   // Canvas games may defer drawing to render().
+ *   // Called once at startup.
  *
  *   input(event: GameInputEvent): void,
  *   // Structured events: { type: 'keydown'|'keyup', key: string }
  *   //                  | { type: 'mouse_y'|'touch_y', row: number }
- *   // For canvas games row is in logical px (0..logicalHeight).
+ *   // row is in logical px (0..logicalHeight).
  *
  *   tick(dt: number): void,
  *   // Called at fixed 60fps timestep. dt is always ~16.67ms.
- *   // Update game state only — do not draw in canvas games.
+ *   // Update game state only — do not draw.
  *
- *   render?(ctx: CanvasRenderingContext2D, { w: number, h: number }): void,
- *   // Canvas games only. Called once per frame after tick().
- *   // ctx transform is pre-scaled: draw in logical coordinates (0..w, 0..h).
+ *   render(ctx: CanvasRenderingContext2D, { w: number, h: number }): void,
+ *   // Called once per frame after tick(). Draw in logical coordinates (0..w, 0..h).
+ *   // ctx transform is pre-scaled: physical pixels = logical px × dpr.
  *
  *   destroy(): void,
  *   // Cleanup. Called when the console is torn down.
@@ -39,8 +35,6 @@
  * ── GameAPI ─────────────────────────────────────────────────────────────────
  *
  * {
- *   setDot(col, row, state: 0|1|2): void,   // matrix games only
- *   clearGrid(): void,                        // matrix games only
  *   emit(name: string, data?: object): void,
  * }
  *
@@ -57,17 +51,8 @@
 
 const TICK_MS = 1000 / 60   // fixed timestep ≈ 16.67 ms
 
-export function createConsole(game, { onDraw, onEvent, getCanvasCtx } = {}) {
-  const { cols = 0, rows = 0 } = game.meta.gridSize ?? {}
-  const dots = new Uint8Array(cols * rows)
-
+export function createConsole(game, { onEvent, getCanvasCtx } = {}) {
   const api = {
-    setDot(col, row, state) {
-      if (col >= 0 && col < cols && row >= 0 && row < rows) {
-        dots[row * cols + col] = state
-      }
-    },
-    clearGrid() { dots.fill(0) },
     emit(name, data) {
       onEvent?.({ name, data: data ?? null, t: Date.now() })
     },
@@ -92,12 +77,9 @@ export function createConsole(game, { onDraw, onEvent, getCanvasCtx } = {}) {
       accumulated -= TICK_MS
     }
 
-    if (game.render && getCanvasCtx) {
-      const c = getCanvasCtx()
-      if (c) game.render(c.ctx, { w: c.w, h: c.h })
-    } else {
-      onDraw?.(dots)
-    }
+    const c = getCanvasCtx?.()
+    if (c) game.render(c.ctx, { w: c.w, h: c.h })
+
     rafId = requestAnimationFrame(frame)
   }
 
@@ -105,7 +87,6 @@ export function createConsole(game, { onDraw, onEvent, getCanvasCtx } = {}) {
     if (rafId !== null) {
       cancelAnimationFrame(rafId)
       rafId = null
-      // Reset accumulator so we don't over-tick on resume
       lastTime    = null
       accumulated = 0
     }
