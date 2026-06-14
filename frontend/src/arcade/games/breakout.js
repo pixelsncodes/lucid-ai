@@ -24,6 +24,15 @@ const BALL_SPEED_MAX  = 16
 const BALL_SPEED_BUMP = 1.06
 const SERVE_ANGLE_MIN = 0.3
 
+// ── Pixel-to-grid geometry ────────────────────────────────────────────────────
+// Ball is drawn as an 8px square sprite; at cellH = LOGICAL_H/ROWS = 20px that
+// is 0.4 grid cells.  PADDLE_TOP is the grid-coord top edge of the paddle rect,
+// shared by both the physics plane and the render call so they never diverge.
+
+const BALL_RADIUS_CELLS = 8 / (LOGICAL_H / ROWS)    // 0.4 cells
+const PADDLE_TOP        = PADDLE_ROW + 0.35          // grid-coord top edge of paddle
+const BRICK_HIT_HALF    = 0.5 + BALL_RADIUS_CELLS   // 0.9 — brick half + ball radius
+
 // ── Timing ───────────────────────────────────────────────────────────────────
 
 const LIVES_INIT        = 3
@@ -120,29 +129,37 @@ export function createBreakout() {
       ball.vy = Math.abs(ball.vy)
     }
 
-    // Brick collision
-    const bx = Math.round(ball.x), by = Math.round(ball.y)
-    if (by >= BRICK_ROW_1 && by <= BRICK_ROW_N && bx >= BRICK_COL_1 && bx <= BRICK_COL_N && bricks[by]?.[bx]) {
-      bricks[by][bx] = false
-      bricksRemaining--
-      score++
-      api.emit('player_scored', { score, bricksRemaining })
-      const byPrev = Math.round(prevY)
-      if (byPrev !== by) ball.vy = -ball.vy
-      else ball.vx = -ball.vx
-      if (bricksRemaining === 0) {
-        phase = 'win'
-        api.emit('scrap_lost', { score })
-        return
+    // Brick collision — radius-based AABB; minimum-overlap axis bounce
+    outer:
+    for (let br = Math.floor(ball.y - BALL_RADIUS_CELLS); br <= Math.ceil(ball.y + BALL_RADIUS_CELLS); br++) {
+      for (let bc = Math.floor(ball.x - BALL_RADIUS_CELLS); bc <= Math.ceil(ball.x + BALL_RADIUS_CELLS); bc++) {
+        if (br < BRICK_ROW_1 || br > BRICK_ROW_N || bc < BRICK_COL_1 || bc > BRICK_COL_N) continue
+        if (!bricks[br]?.[bc]) continue
+        const ovX = BRICK_HIT_HALF - Math.abs(ball.x - bc)
+        const ovY = BRICK_HIT_HALF - Math.abs(ball.y - br)
+        if (ovX <= 0 || ovY <= 0) continue
+        bricks[br][bc] = false
+        bricksRemaining--
+        score++
+        api.emit('player_scored', { score, bricksRemaining })
+        if (ovX < ovY) {
+          ball.vx = -ball.vx
+          ball.x += Math.sign(ball.x - bc) * ovX
+        } else {
+          ball.vy = -ball.vy
+          ball.y += Math.sign(ball.y - br) * ovY
+        }
+        if (bricksRemaining === 0) { phase = 'win'; api.emit('scrap_lost', { score }); return }
+        break outer
       }
     }
 
-    // Paddle collision
+    // Paddle collision — ball bottom edge vs PADDLE_TOP (same coord used in render)
     const paddleLeft  = paddle.x
     const paddleRight = paddle.x + PADDLE_WIDTH - 1
-    if (ball.vy > 0 && prevY < PADDLE_ROW - 0.5 && ball.y >= PADDLE_ROW - 0.5) {
+    if (ball.vy > 0 && prevY + BALL_RADIUS_CELLS < PADDLE_TOP && ball.y + BALL_RADIUS_CELLS >= PADDLE_TOP) {
       if (ball.x >= paddleLeft - 0.5 && ball.x <= paddleRight + 0.5) {
-        ball.y  = 2*(PADDLE_ROW - 0.5) - ball.y
+        ball.y  = PADDLE_TOP - BALL_RADIUS_CELLS
         ball.vy = -Math.abs(ball.vy)
         const offset  = (ball.x - (paddleLeft + (PADDLE_WIDTH - 1) / 2)) / (PADDLE_WIDTH / 2)
         ball.vx      += offset * 2
@@ -157,7 +174,7 @@ export function createBreakout() {
       }
     }
 
-    if (ball.y > PADDLE_ROW + 1) loseLife()
+    if (ball.y > PADDLE_TOP + 1) loseLife()
   }
 
   function loseLife() {
@@ -208,9 +225,9 @@ export function createBreakout() {
       ctx.fillRect(ball.x * cellW - 4, ball.y * cellH - 4, 8, 8)
     }
 
-    // Paddle
+    // Paddle — padY uses PADDLE_TOP so render matches the collision plane exactly
     const padX = paddle.x * cellW
-    const padY = (PADDLE_ROW + 0.35) * cellH
+    const padY = PADDLE_TOP * cellH
     ctx.fillStyle = '#fff'
     ctx.fillRect(padX, padY, PADDLE_WIDTH * cellW - 1, cellH * 0.45)
 
