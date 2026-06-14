@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createInvaders } from './invaders.js'
 
+// Canvas invaders — logical constants (must match invaders.js)
+const LOGICAL_W = 480
+const LOGICAL_H = 320
+
+// Mock API — canvas games only need emit; no setDot/clearGrid.
 function mockApi() {
   const events = []
   return {
-    setDot: vi.fn(),
-    clearGrid: vi.fn(),
     emit: vi.fn((name, data) => events.push({ name, data: data ?? null })),
     events,
   }
@@ -15,7 +18,7 @@ function skipCountdown(game) {
   game.tick(800); game.tick(800); game.tick(800)
 }
 
-describe('invaders', () => {
+describe('invaders (canvas)', () => {
   let api, game
 
   beforeEach(() => {
@@ -27,12 +30,31 @@ describe('invaders', () => {
     api.emit.mockClear()
   })
 
+  // ── Meta ──────────────────────────────────────────────────────────────────
+
+  it('meta.renderer is canvas', () => {
+    expect(game.meta.renderer).toBe('canvas')
+  })
+
+  it('meta.logicalWidth / logicalHeight match 480×320', () => {
+    expect(game.meta.logicalWidth).toBe(LOGICAL_W)
+    expect(game.meta.logicalHeight).toBe(LOGICAL_H)
+  })
+
+  it('render method exists', () => {
+    expect(typeof game.render).toBe('function')
+  })
+
+  // ── Startup ───────────────────────────────────────────────────────────────
+
   it('emits game_start on init', () => {
     const g = createInvaders()
     const a = mockApi()
     g.init(a)
     expect(a.events.some(e => e.name === 'game_start')).toBe(true)
   })
+
+  // ── Player ────────────────────────────────────────────────────────────────
 
   it('player moves right on ArrowRight', () => {
     const before = game._getPlayer().x
@@ -50,16 +72,16 @@ describe('invaders', () => {
   it('player cannot fire while bullet is active', () => {
     game.input({ type: 'keydown', key: ' ' })
     const y1 = game._getBullet().y
-    game.tick(16.67) // bullet moves up
+    game.tick(16.67)
     const y2 = game._getBullet().y
-    // Try firing again — bullet position should be y2, not reset to player row
     game.input({ type: 'keydown', key: ' ' })
     expect(game._getBullet().y).toBe(y2)
-    expect(y2).toBeLessThan(y1)  // bullet moved upward
+    expect(y2).toBeLessThan(y1)
   })
 
+  // ── Scoring / events ──────────────────────────────────────────────────────
+
   it('bullet killing an invader emits player_scored', () => {
-    // invader [0][0] is at col=INV_START_C=2, row=INV_START_R=2 initially
     game._setBullet(2, 2.1, true)
     game.tick(16.67)
     expect(api.events.some(e => e.name === 'player_scored')).toBe(true)
@@ -74,24 +96,19 @@ describe('invaders', () => {
   })
 
   it('bomb hitting player emits scrap_won when last life', () => {
-    // Drain lives to 1 via direct manipulation, then bomb the player
     for (let i = 0; i < 2; i++) {
       game._spawnBomb(game._getPlayer().x, 13)
       for (let t = 0; t < 20; t++) game.tick(16.67)
-      game._forcePhase('playing') // resume after 'dead' flash
+      game._forcePhase('playing')
     }
     api.events.length = 0
-    // Final bomb on player
     game._spawnBomb(game._getPlayer().x, 13)
     for (let t = 0; t < 20; t++) game.tick(16.67)
     expect(api.events.some(e => e.name === 'scrap_won')).toBe(true)
   })
 
   it('invaders reaching player row emits scrap_won', () => {
-    // lowestInvRow = INV_START_R(2) + (INV_ROWS-1)(2)*2 + armyY = 2+4+armyY
-    // DANGER_ROW = PLAYER_ROW = 14. Need 2+4+armyY >= 14 → armyY >= 8.
-    game._setArmyY(10)  // lowestInvRow = 16 >= 14
-    // Tick past one army step interval (0.9s = 54 ticks at 16.67ms)
+    game._setArmyY(10)
     for (let t = 0; t < 60; t++) game.tick(16.67)
     expect(api.events.some(e => e.name === 'scrap_won')).toBe(true)
   })

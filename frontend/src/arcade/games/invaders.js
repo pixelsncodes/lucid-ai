@@ -1,25 +1,30 @@
-import { OFF, DIM, LIT } from '../constants'
+// ── Canvas Invaders ───────────────────────────────────────────────────────────
+// Classic white-on-black. Renders via render(ctx, {w, h}); tick() is logic only.
+// All positions stay in grid-coordinate space; render() scales to logical pixels.
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 
 const COLS         = 24
 const ROWS         = 16
-const INV_COLS     = 5            // invader columns
-const INV_ROWS     = 3            // invader rows
-const INV_SPACING  = 4            // columns between invader centres
-const INV_START_C  = 2            // leftmost invader column at rest
-const INV_START_R  = 2            // topmost invader row at rest
+const INV_COLS     = 5
+const INV_ROWS     = 3
+const INV_SPACING  = 4
+const INV_START_C  = 2
+const INV_START_R  = 2
 const PLAYER_ROW   = ROWS - 2     // row 14
-const LIVES_ROW    = ROWS - 1     // row 15 — live pips
-const DANGER_ROW   = PLAYER_ROW   // if invaders reach this row, game over
+const LIVES_ROW    = ROWS - 1     // row 15
+const DANGER_ROW   = PLAYER_ROW
+
+const LOGICAL_W = 480
+const LOGICAL_H = 320
 
 // ── Timing / speed ────────────────────────────────────────────────────────────
 
-const INV_STEP_INIT  = 0.9       // seconds between army steps (at full strength)
-const INV_STEP_MIN   = 0.15      // minimum step interval (all invaders dead = irrelevant)
-const BULLET_SPEED   = 10        // player bullet: dots/sec (upward)
-const BOMB_SPEED     = 3.5       // invader bomb: dots/sec (downward)
-const BOMB_INTERVAL  = 2.0       // seconds between random bomb drops
+const INV_STEP_INIT  = 0.9
+const INV_STEP_MIN   = 0.15
+const BULLET_SPEED   = 10
+const BOMB_SPEED     = 3.5
+const BOMB_INTERVAL  = 2.0
 const LIVES_INIT     = 3
 const COUNTDOWN_STEP_MS = 800
 
@@ -28,32 +33,27 @@ const COUNTDOWN_STEP_MS = 800
 export function createInvaders() {
   let api = null
 
-  // Invader grid: alive[r][c] = true if alive
   let alive  = []
   let total  = INV_ROWS * INV_COLS
   let kills  = 0
 
-  // Army offset from starting position
-  let armyX  = 0   // column offset (integer, applied to invader draw)
-  let armyDX = 1   // +1 = right, -1 = left
-  let armyY  = 0   // row offset (integer steps down)
-  let stepTimer = 0      // time until next army step (seconds)
+  let armyX  = 0
+  let armyDX = 1
+  let armyY  = 0
+  let stepTimer    = 0
   let stepInterval = INV_STEP_INIT
 
-  // Player
   const player  = { x: Math.floor(COLS / 2) }
-  let playerVX  = 0     // -1|0|1
+  let playerVX  = 0
 
-  // Bullets & bombs
   const bullet  = { x: 0, y: 0, active: false }
-  const bombs   = []    // [{x, y}]
+  const bombs   = []
 
   let bombTimer = BOMB_INTERVAL
 
-  // Misc
   let lives      = LIVES_INIT
   let score      = 0
-  let phase      = 'idle'   // idle|countdown|playing|dead|win
+  let phase      = 'idle'
   let phaseTimer = 0
   let countdownN = 3
 
@@ -90,11 +90,9 @@ export function createInvaders() {
     api.emit('game_start', { game: 'invaders' })
   }
 
-  // Absolute column of invader [r][c]
   function invCol(c) { return INV_START_C + c * INV_SPACING + armyX }
   function invRow(r) { return INV_START_R + r * 2 + armyY }
 
-  // Leftmost / rightmost alive invader column
   function armyBounds() {
     let minC = INV_COLS, maxC = -1
     for (let r = 0; r < INV_ROWS; r++)
@@ -103,7 +101,6 @@ export function createInvaders() {
     return { minC, maxC }
   }
 
-  // Lowest alive invader row (absolute)
   function lowestInvRow() {
     for (let r = INV_ROWS - 1; r >= 0; r--)
       for (let c = 0; c < INV_COLS; c++)
@@ -111,7 +108,6 @@ export function createInvaders() {
     return -1
   }
 
-  // Pick a random alive invader from the bottom of each column (classic invader bombing)
   function pickBomber() {
     const cols = []
     for (let c = 0; c < INV_COLS; c++) {
@@ -125,48 +121,8 @@ export function createInvaders() {
 
   function adjustSpeed() {
     const alive_count = total - kills
-    const frac  = alive_count / total  // 1.0 = full, 0 = none
+    const frac  = alive_count / total
     stepInterval = Math.max(INV_STEP_MIN, INV_STEP_INIT * frac)
-  }
-
-  // ── Drawing ────────────────────────────────────────────────────────────────
-
-  function dot(c, r, state) { api.setDot(c, r, state) }
-
-  function drawHUD() {
-    // Row 0: score pips (LIT per kill)
-    const lit = Math.min(kills, COLS)
-    for (let i = 0; i < COLS; i++) dot(i, 0, i < lit ? LIT : DIM)
-    // Bottom row: life pips
-    for (let i = 0; i < LIVES_INIT; i++) dot(i, LIVES_ROW, i < lives ? LIT : DIM)
-  }
-
-  function drawArmy() {
-    for (let r = 0; r < INV_ROWS; r++) {
-      for (let c = 0; c < INV_COLS; c++) {
-        if (!alive[r][c]) continue
-        const ic = invCol(c), ir = invRow(r)
-        if (ic >= 0 && ic < COLS && ir >= 0 && ir < ROWS) dot(ic, ir, LIT)
-      }
-    }
-  }
-
-  function drawPlayer() {
-    if (player.x >= 0 && player.x < COLS) dot(player.x, PLAYER_ROW, LIT)
-  }
-
-  function drawBullet() {
-    if (bullet.active) {
-      const bx = Math.round(bullet.x), by = Math.round(bullet.y)
-      if (bx >= 0 && bx < COLS && by >= 0 && by < ROWS) dot(bx, by, LIT)
-    }
-  }
-
-  function drawBombs() {
-    for (const b of bombs) {
-      const bx = Math.round(b.x), by = Math.round(b.y)
-      if (bx >= 0 && bx < COLS && by >= 0 && by < ROWS) dot(bx, by, DIM)
-    }
   }
 
   // ── Physics ────────────────────────────────────────────────────────────────
@@ -174,15 +130,14 @@ export function createInvaders() {
   function tickPlaying(dt) {
     const dtS = dt / 1000
 
-    // ── Player movement ──
+    // Player movement
     player.x = clamp(player.x + playerVX * Math.round(14 * dtS + 0.5), 0, COLS - 1)
 
-    // ── Bullet ──
+    // Bullet
     if (bullet.active) {
       bullet.y -= BULLET_SPEED * dtS
       if (bullet.y < 0) { bullet.active = false }
 
-      // Bullet vs invader
       if (bullet.active) {
         const bx = Math.round(bullet.x), by = Math.round(bullet.y)
         outer: for (let r = 0; r < INV_ROWS; r++) {
@@ -207,7 +162,7 @@ export function createInvaders() {
       }
     }
 
-    // ── Bombs ──
+    // Bombs
     bombTimer -= dtS
     if (bombTimer <= 0) {
       bombTimer = BOMB_INTERVAL * (0.8 + Math.random() * 0.4)
@@ -222,14 +177,12 @@ export function createInvaders() {
 
       const bx = Math.round(bombs[i].x), by = Math.round(bombs[i].y)
 
-      // Bomb hits player
       if (bx === player.x && by === PLAYER_ROW) {
         bombs.splice(i, 1)
         playerHit()
         return
       }
 
-      // near_miss: bomb passed within 1 col of player at player row
       if (Math.abs(bx - player.x) <= 1 && by === PLAYER_ROW) {
         api.emit('near_miss', { bombX: bx, playerX: player.x })
       }
@@ -237,21 +190,18 @@ export function createInvaders() {
       if (bombs[i] && bombs[i].y > ROWS) bombs.splice(i, 1)
     }
 
-    // ── Army march ──
+    // Army march
     stepTimer -= dtS
     if (stepTimer <= 0) {
       stepTimer = stepInterval
 
-      // Try stepping in current direction
       const { minC, maxC } = armyBounds()
       const leftEdge  = invCol(minC) + armyDX
       const rightEdge = invCol(maxC) + armyDX
 
       if (leftEdge < 0 || rightEdge >= COLS) {
-        // Hit an edge: reverse and drop
         armyDX = -armyDX
         armyY++
-        // Check if any invader reached the danger row
         if (lowestInvRow() >= DANGER_ROW) {
           phase = 'gameover'
           api.emit('scrap_won', { score, reason: 'invasion' })
@@ -261,7 +211,6 @@ export function createInvaders() {
         armyX += armyDX
       }
 
-      // Check invasion after any step (not only on drops)
       if (lowestInvRow() >= DANGER_ROW) {
         phase = 'gameover'
         api.emit('scrap_won', { score, reason: 'invasion' })
@@ -282,13 +231,122 @@ export function createInvaders() {
     }
   }
 
+  // ── Rendering ─────────────────────────────────────────────────────────────
+
+  function render(ctx, { w, h }) {
+    const cellW = w / COLS
+    const cellH = h / ROWS
+
+    // Background
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, w, h)
+
+    // Score top-left
+    ctx.fillStyle = '#fff'
+    ctx.font = '13px monospace'
+    ctx.textBaseline = 'top'
+    ctx.textAlign = 'left'
+    ctx.fillText(`${score}`, 6, 4)
+
+    // Lives bottom-left
+    ctx.textBaseline = 'bottom'
+    ctx.fillText('♥ '.repeat(lives).trim(), 6, h - 4)
+
+    // Invader army — each invader: blocky rect with "antenna" notch on top row
+    for (let r = 0; r < INV_ROWS; r++) {
+      for (let c = 0; c < INV_COLS; c++) {
+        if (!alive[r][c]) continue
+        const ic = invCol(c), ir = invRow(r)
+        if (ic < 0 || ic >= COLS || ir < 0 || ir >= ROWS) continue
+        const px = ic * cellW, py = ir * cellH
+        // Body
+        ctx.fillStyle = '#fff'
+        ctx.fillRect(px + 2, py + 4, cellW - 4, cellH - 6)
+        // "Legs" — two small protrusions at bottom
+        ctx.fillRect(px + 1,        py + cellH - 4, 4, 3)
+        ctx.fillRect(px + cellW - 5, py + cellH - 4, 4, 3)
+        // "Eyes"
+        ctx.fillStyle = '#000'
+        ctx.fillRect(px + 4,        py + 6, 3, 3)
+        ctx.fillRect(px + cellW - 7, py + 6, 3, 3)
+      }
+    }
+
+    // Player cannon
+    const px = player.x * cellW
+    const py = PLAYER_ROW * cellH
+    ctx.fillStyle = '#fff'
+    // Base
+    ctx.fillRect(px - cellW * 0.6, py + cellH * 0.4, cellW * 2.2, cellH * 0.5)
+    // Barrel
+    ctx.fillRect(px + cellW * 0.3, py + cellH * 0.1, cellW * 0.4, cellH * 0.4)
+
+    // Player bullet
+    if (bullet.active) {
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(bullet.x * cellW + cellW * 0.4, bullet.y * cellH, 2, cellH)
+    }
+
+    // Enemy bombs
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'
+    for (const b of bombs) {
+      ctx.fillRect(b.x * cellW + cellW * 0.3, b.y * cellH, 4, 4)
+    }
+
+    // Countdown overlay
+    if (phase === 'countdown') {
+      ctx.fillStyle = '#fff'
+      ctx.font = '72px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(String(countdownN), w / 2, h / 2)
+    }
+
+    // Pause overlay
+    if (phase === 'paused') {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'
+      ctx.fillRect(0, 0, w, h)
+      ctx.fillStyle = '#fff'
+      ctx.font = '36px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('PAUSED', w / 2, h / 2)
+    }
+
+    // Win screen
+    if (phase === 'win') {
+      ctx.fillStyle = '#fff'
+      ctx.font = '44px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('YOU WIN', w / 2, h / 2 - 28)
+      ctx.font = '16px monospace'
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillText('space to play again', w / 2, h / 2 + 20)
+    }
+
+    // Game-over screen
+    if (phase === 'gameover') {
+      ctx.fillStyle = '#fff'
+      ctx.font = '36px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('INVADED', w / 2, h / 2 - 28)
+      ctx.font = '16px monospace'
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillText('space to play again', w / 2, h / 2 + 20)
+    }
+  }
+
   // ── Contract ────────────────────────────────────────────────────────────────
 
   return {
     meta: {
-      id:       'invaders',
-      name:     'INVADERS',
-      gridSize: { cols: COLS, rows: ROWS },
+      id:            'invaders',
+      name:          'INVADERS',
+      renderer:      'canvas',
+      logicalWidth:  LOGICAL_W,
+      logicalHeight: LOGICAL_H,
     },
 
     init(_api) {
@@ -337,65 +395,25 @@ export function createInvaders() {
           countdownN--
           if (countdownN <= 0) { phase = 'playing'; break }
         }
-        api.clearGrid()
-        drawHUD()
-        drawArmy()
-        drawPlayer()
         return
       }
 
       if (phase === 'playing') {
         tickPlaying(dt)
-        if (phase === 'playing') {
-          api.clearGrid()
-          drawHUD()
-          drawArmy()
-          drawPlayer()
-          drawBullet()
-          drawBombs()
-        }
-        return
-      }
-
-      if (phase === 'paused') {
-        api.clearGrid()
-        drawHUD()
-        drawArmy()
-        drawPlayer()
         return
       }
 
       if (phase === 'dead') {
-        // Brief flash then respawn
         phaseTimer += dt
-        api.clearGrid()
-        drawHUD()
-        drawArmy()
         if (phaseTimer >= 1000) {
           phase = 'playing'
           bullet.active = false
         }
         return
       }
-
-      if (phase === 'win') {
-        api.clearGrid()
-        for (let r = 0; r < ROWS; r++)
-          for (let c = 0; c < COLS; c++)
-            if ((r + c) % 2 === 0) dot(c, r, LIT)
-        drawHUD()
-        return
-      }
-
-      if (phase === 'gameover') {
-        api.clearGrid()
-        for (let r = 0; r < ROWS; r++)
-          for (let c = 0; c < COLS; c++)
-            if ((r + c) % 3 === 0) dot(c, r, DIM)
-        drawHUD()
-        return
-      }
     },
+
+    render,
 
     destroy() { api = null },
 
