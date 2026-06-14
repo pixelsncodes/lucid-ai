@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import './ArcadeSandbox.css'
-import GameGrid from './GameGrid'
+import GameGrid   from './GameGrid'
+import GameCanvas from './GameCanvas'
 import { createConsole } from './gameConsole'
 import { createPong }     from './games/pong'
 import { createSnake }    from './games/snake'
@@ -21,7 +22,7 @@ const GAME_FACTORIES = [
 ]
 
 const GAME_HELP = {
-  pong:     'mouse or ↑↓ paddle · Esc pause · first to 5 · Space restart',
+  pong:     'mouse or ↑↓ paddle · Esc quit · first to 7 · Space restart',
   snake:    '↑↓←→ steer · Space start/restart · Esc quit',
   breakout: '←→ paddle · mouse↕ = paddle x · Space restart',
   invaders: '←→ move · Space fire · Esc pause',
@@ -30,12 +31,13 @@ const GAME_HELP = {
 }
 
 export default function ArcadeSandbox() {
-  const gridRef     = useRef(null)
-  const arenaRef    = useRef(null)
-  const consRef     = useRef(null)     // current GameConsole
-  const gameRef     = useRef(null)     // current game object (for input forwarding)
-  const idxRef      = useRef(0)
-  const launchRef   = useRef(null)     // stable pointer to launchGame for effect closures
+  const gridRef    = useRef(null)
+  const canvasRef  = useRef(null)
+  const arenaRef   = useRef(null)
+  const consRef    = useRef(null)
+  const gameRef    = useRef(null)
+  const idxRef     = useRef(0)
+  const launchRef  = useRef(null)
 
   const [events,   setEvents]   = useState([])
   const [gameMeta, setGameMeta] = useState(null)
@@ -51,16 +53,23 @@ export default function ArcadeSandbox() {
     gameRef.current = game
     setGameMeta(game.meta)
 
+    const renderer = game.meta.renderer ?? 'matrix'
+
     const cons = createConsole(game, {
-      onDraw(dots) { gridRef.current?.setDots(dots) },
-      onEvent(e)   { setEvents(prev => [e, ...prev].slice(0, MAX_EVENTS)) },
+      onDraw:
+        renderer === 'matrix'
+          ? (dots) => gridRef.current?.setDots(dots)
+          : undefined,
+      getCanvasCtx:
+        renderer === 'canvas'
+          ? () => canvasRef.current?.getCtx() ?? null
+          : undefined,
+      onEvent: (e) => setEvents(prev => [e, ...prev].slice(0, MAX_EVENTS)),
     })
     consRef.current = cons
     cons.start()
   }
 
-  // Keep stable ref so the event handlers added in useEffect can always
-  // call the latest version of launchGame (which closes over React state setters).
   launchRef.current = launchGame
 
   useEffect(() => {
@@ -70,8 +79,12 @@ export default function ArcadeSandbox() {
       if (!arenaRef.current) return null
       const rect = arenaRef.current.getBoundingClientRect()
       const frac = (clientY - rect.top) / rect.height
-      const rows = gameRef.current?.meta?.gridSize?.rows ?? 14
-      return frac * rows
+      const game = gameRef.current
+      // Canvas games use logical px; matrix games use grid rows.
+      if ((game?.meta?.renderer ?? 'matrix') === 'canvas') {
+        return frac * (game.meta.logicalHeight ?? 384)
+      }
+      return frac * (game?.meta?.gridSize?.rows ?? 14)
     }
 
     function onKey(e) {
@@ -128,6 +141,8 @@ export default function ArcadeSandbox() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const renderer = gameMeta?.renderer ?? 'matrix'
+  const isCanvas = renderer === 'canvas'
   const { cols = 24, rows = 14 } = gameMeta?.gridSize ?? {}
   const help = GAME_HELP[gameMeta?.id] ?? ''
 
@@ -140,13 +155,23 @@ export default function ArcadeSandbox() {
 
       <div className="sandbox-body">
         <div className="sandbox-arena" ref={arenaRef}>
-          <GameGrid
-            ref={gridRef}
-            cols={cols}
-            rows={rows}
-            dotSize={10}
-            gap={5}
-          />
+          {isCanvas ? (
+            <GameCanvas
+              ref={canvasRef}
+              logicalWidth={gameMeta?.logicalWidth  ?? 640}
+              logicalHeight={gameMeta?.logicalHeight ?? 384}
+              cssWidth={gameMeta?.logicalWidth  ?? 640}
+              cssHeight={gameMeta?.logicalHeight ?? 384}
+            />
+          ) : (
+            <GameGrid
+              ref={gridRef}
+              cols={cols}
+              rows={rows}
+              dotSize={10}
+              gap={5}
+            />
+          )}
         </div>
 
         <aside className="sandbox-events">

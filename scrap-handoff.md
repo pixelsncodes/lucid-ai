@@ -103,30 +103,68 @@ Root causes were in FTS5 query construction (filler-word stopwords), plural/suff
 
 Note: smoke tests emit fiction-guard probes (e.g. "What is the capital of Atlantis?") into the uvicorn log — that's expected test traffic.
 
-## Arcade track — COMPLETE, integration pending
+## Arcade track — renderer migration IN PROGRESS
 
 Standalone sandbox at `/arcade` route. Not yet wired into the main SCRAP chat UI.
 
-**Files:** `frontend/src/arcade/`
+### Renderer system (Session 1, June 2026)
+
+The contract now supports two rendering paths via `meta.renderer`:
+
+- **`'matrix'` (default)** — existing dot-grid renderer. Game draws via `api.setDot()` / `api.clearGrid()` inside `tick()`. Unchanged; all five matrix games stay on this path.
+- **`'canvas'`** — new Canvas 2D path. Game implements an optional `render(ctx, { w, h })` called by the console each frame after `tick()`. `ctx` is pre-scaled to logical coordinates via `setTransform`. `tick()` is pure game logic — no drawing.
+
+**New files:**
+- `GameCanvas.jsx` — `forwardRef` canvas component. DevicePixelRatio-aware: `ResizeObserver` keeps the backing store in sync with `displaySize × dpr`. `ref.getCtx()` returns `{ ctx, w, h }` with the logical-to-physical transform already applied.
+- `games/pong.test.js` — 19 tests for canvas pong (logic + events, no canvas ctx needed).
+
+**Contract additions (additive — matrix games unaffected):**
+
+```
+meta: {
+  renderer?:      'matrix' | 'canvas'   // default 'matrix'
+  logicalWidth?:  number                // canvas games only (e.g. 640)
+  logicalHeight?: number                // canvas games only (e.g. 384)
+}
+
+render?(ctx, { w, h }): void
+  // Canvas games only. Draw in logical coordinates (0..w, 0..h).
+  // Called by the console each frame after tick(). Do not call setDot.
+```
+
+For canvas games, `mouse_y` / `touch_y` events deliver a logical Y coordinate (0..logicalHeight) instead of a grid row. `ArcadeSandbox.toRow()` branches on `meta.renderer` to compute the right value.
+
+### Files: `frontend/src/arcade/`
+
 - `GameGrid.jsx` — NxM dot-matrix canvas component. Imperative rendering: parent calls `ref.setDots(flat Uint8Array)` each frame to avoid 60fps React re-renders. Dot states: `0=OFF`, `1=DIM`, `2=LIT`. Uses the same visual constants as the face matrix (DOT_COLOR, DOT_SIZE 22px, DOT_GAP 14px).
-- `gameConsole.js` — factory + **game-console contract**. Every game must implement `{ meta, init(api), input(event), tick(dt), destroy() }`. `GameAPI`: `setDot(col, row, state)`, `clearGrid()`, `emit(name, data)`. Semantic events games must emit: `game_start`, `scrap_scored`, `player_scored`, `near_miss`, `scrap_won`, `scrap_lost`, `game_quit`. Fixed timestep: 60fps / ~16.67ms tick.
-- `constants.js` — shared visual constants (`DOT_COLOR`, `DOT_SIZE`, `DOT_GAP`, `OP_OFF/DIM/LIT`, flat-buffer `OFF/DIM/LIT` state values).
-- `ArcadeSandbox.jsx` / `ArcadeSandbox.css` — standalone `/arcade` route. All 6 games wired in. Tab cycles forward, Shift+Tab cycles back, keys 1–6 jump directly. ArrowLeft/ArrowRight added to the `preventDefault` list (needed for Breakout, Invaders, Tetris). Per-game help text shown in footer.
-- `games/pong.js` — Game 1. 24×14 grid, AI opponent (SCRAP), score pips, countdown, ball speed progression.
+- `GameCanvas.jsx` — **NEW**. DPI-aware `<canvas>` for canvas-renderer games. `ref.getCtx()` returns `{ ctx, w, h }` with pre-applied logical-to-physical transform.
+- `gameConsole.js` — factory + **game-console contract**. Extended: accepts `getCanvasCtx` option; after each tick batch, if `game.render` and `getCanvasCtx` both exist, calls `game.render(ctx, {w, h})` instead of `onDraw(dots)`. Matrix path unchanged. Fixed timestep: 60fps / ~16.67ms tick.
+- `constants.js` — shared visual constants for matrix games (`DOT_COLOR`, `DOT_SIZE`, `DOT_GAP`, `OP_OFF/DIM/LIT`, flat-buffer `OFF/DIM/LIT`).
+- `ArcadeSandbox.jsx` / `ArcadeSandbox.css` — standalone `/arcade` route. All 6 games wired in. Tab cycles forward, Shift+Tab cycles back, keys 1–6 jump directly. Renderer-conditional: renders `<GameCanvas>` for `renderer='canvas'` games, `<GameGrid>` for matrix games. `getCanvasCtx` / `onDraw` callbacks wired accordingly.
+
+### Games
+
+- **`games/pong.js` — Game 1. CANVAS VERSION (session 1).** 640×384 logical, white-on-black. Square ball (10px), paddles (10×64, 18px from walls). Dashed center net. Monospace score top-center. Mouse Y / arrow keys move player; AI right side capped at **3.7 px/frame** so it's beatable at high rally speeds. Ball speeds up 1.035× per hit. First to 7. Esc quits (`game_quit`), Space/Enter restarts. `near_miss` fires when the ball exits past a paddle edge within 10px.
 - `games/snake.js` — Game 2. 24×14 grid, wall/self-collision = `scrap_won`, food = `player_scored`, 180° reversal blocked.
 - `games/breakout.js` — Game 3. 24×16 grid, 3 lives, 5 brick rows. Ball speed bumps on each brick. `near_miss` on paddle-edge hits, `scrap_won` on last life, `scrap_lost` on all bricks cleared. Mouse↕ remapped to horizontal paddle position.
 - `games/invaders.js` — Game 4. 24×16 grid, 5×3 army. Invasion check fires on every army step (not only on edge drops). `near_miss` on each non-final life lost, `scrap_won` on invasion or last life, `scrap_lost` on all kills.
 - `games/tetris.js` — Game 5. 10×20 grid. 7 tetrominoes, 4-rotation wall-kick, hard drop, soft drop, line scoring (classic Tetris scale × level). `player_scored` per line clear, `scrap_won` on board full.
-- `games/frogger.js` — Game 6. 16×13 grid. **Fifth-game choice**: Frogger suits the coarse dot-matrix well because its core elements (frog, logs, cars) each occupy 1–2 dots and the traffic/river pattern reads clearly even at low resolution. Logs drift continuously (frog rides them as a float offset), cars are integer-collision. 5 lily-pad goal strip. `player_scored` per pad, `scrap_lost` when all 5 filled, `scrap_won` on last life, `near_miss` on non-final life loss.
+- `games/frogger.js` — Game 6. 16×13 grid. Frogger suits the coarse dot-matrix well because its core elements (frog, logs, cars) each occupy 1–2 dots and the traffic/river pattern reads clearly even at low resolution. Logs drift continuously (frog rides them as a float offset), cars are integer-collision. 5 lily-pad goal strip. `player_scored` per pad, `scrap_lost` when all 5 filled, `scrap_won` on last life, `near_miss` on non-final life loss.
 
-**Test counts (frontend vitest):** 46 tests across 5 test files (9 snake, 10 breakout, 9 invaders, 8 tetris, 9 frogger, 1 pong legacy). All pass headless with mock GameAPI (`environment: 'node'`).
+### Test counts (frontend vitest)
+
+**65 tests across 6 test files** (19 pong canvas, 9 snake, 10 breakout, 9 invaders, 8 tetris, 9 frogger). All pass headless with mock GameAPI (`environment: 'node'`). Canvas render path is not tested (not pixel-testable) — tests cover game state transitions and emitted events only.
+
+### Session 2 scope (pending human review)
+
+Port the remaining five matrix games (snake, breakout, invaders, tetris, frogger) to the canvas renderer. Pattern is established by pong: keep game logic in `tick()`, move all drawing to `render(ctx, {w,h})`, update `meta.renderer = 'canvas'`.
 
 **Contract extensions from implementation:**
 - `_setSnake/setBall/setBullet/setFrog` pattern: test helpers mutate internal state directly (not via copies) so that physics checks in the same tick see the updated state. This is the established pattern for all subsequent games.
 - Mouse_y remapped to horizontal axis in Breakout (row fraction → paddle column) — deviation from pong's vertical use. Noted in per-game help text.
 - `near_miss` in single-player games = "life lost but not last" (not a near-miss on a paddle). Consistent across Breakout, Invaders, Frogger.
 
-**Integration pending**: wire the arcade into the main SCRAP UI — probably via a trigger phrase or `/games` command in chat that swaps the face matrix panel for the GameGrid.
+**Integration pending**: wire the arcade into the main SCRAP UI — probably via a trigger phrase or `/games` command in chat that swaps the face matrix panel for the GameGrid/GameCanvas.
 
 ## Roadmap (priority order)
 
