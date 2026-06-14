@@ -9,7 +9,8 @@ import { createInvaders } from './games/invaders'
 import { createTetris }   from './games/tetris'
 import { createFrogger }  from './games/frogger'
 import { createTron }       from './games/tron'
-import { createConnect4 }   from './games/connect4'
+import { createConnect4 }    from './games/connect4'
+import { createTictactoe }   from './games/tictactoe'
 
 const MAX_EVENTS = 24
 
@@ -22,6 +23,7 @@ const GAME_FACTORIES = [
   createFrogger,
   createTron,
   createConnect4,
+  createTictactoe,
 ]
 
 const GAME_HELP = {
@@ -32,7 +34,8 @@ const GAME_HELP = {
   tetris:   '←→ move · ↑ rotate · ↓ soft drop · Space hard drop · Esc pause',
   frogger:  '↑↓←→ hop · Space restart',
   tron:      '↑↓←→ or WASD steer · Esc quit · first to 3 rounds',
-  connect4:  '←→ cursor · Space/tap drop · Esc quit',
+  connect4:   '←→ cursor · Space/tap drop · Esc quit',
+  tictactoe:  '↑↓←→ cursor · Space/tap place · Esc quit',
 }
 
 export default function ArcadeSandbox() {
