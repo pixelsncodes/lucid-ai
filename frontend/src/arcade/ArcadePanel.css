@@ -1,0 +1,8 @@
+.arcade-panel {
+  border: 1px solid var(--b1);
+  border-radius: 8px;
+  background: var(--s1);
+  padding: 16px;
+  cursor: none;
+  touch-action: none;
+}
