@@ -98,6 +98,8 @@ describe('tetris (canvas)', () => {
     const board = Array.from({ length: 20 }, (_, r) =>
       r < 2 ? new Array(10).fill(DIM) : new Array(10).fill(OFF)
     )
+    board[0][0] = OFF
+    board[1][0] = OFF
     game._setBoard(board)
     game._setNextPiece(1)
     game.input({ type: 'keydown', key: ' ' })
