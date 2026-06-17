@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import { ASSISTANT_NAME, LAUGH_AUDIO_ENABLED } from './identity'
-import { MicVAD } from '@ricky0123/vad-web'
 import { extractReplyFace } from './components/matrix/engine'
 import MatrixStage from './components/MatrixStage'
 import ChatBar from './components/ChatBar'
@@ -18,10 +17,6 @@ const MAX_NUM_CTX = 32000
 const MAX_HISTORY_MESSAGES = 12
 const MAX_HISTORY_CONTENT_LENGTH = 2000
 const MAX_RECORDING_SECONDS = 30
-const RESUME_LISTEN_DELAY_MS = 420
-const VAD_SILENCE_MS = 800
-const VAD_SPEECH_THRESHOLD = 0.3  // positiveSpeechThreshold; library default
-const VAD_NO_SPEECH_TIMEOUT_MS = 10000
 const TTS_START_TIMEOUT_MS = 5000
 const LAUGH_PRE_BEAT_MS = 200
 const AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
@@ -107,15 +102,12 @@ function App() {
   const autoSpeakRef = useRef(true)
   const autoSendVoiceRef = useRef(true)
   const conversationActiveRef = useRef(false)
-  const resumeListenTimerRef = useRef(null)
   const nextChatMessageIdRef = useRef(1)
   const autoSpokenMessageIdsRef = useRef(new Set())
   const activeSpeechRef = useRef(null)
   const laughRunRef = useRef(null)
   const haHaAudioRef = useRef(null)
   const baDumTssAudioRef = useRef(null)
-  const vadRef = useRef(null)
-  const vadNoSpeechTimerRef = useRef(null)
 
   const markInteraction = useCallback(() => setLastInteraction(Date.now()), [])
 
@@ -140,13 +132,6 @@ function App() {
     }
   }
 
-  const clearResumeListenTimer = () => {
-    if (resumeListenTimerRef.current) {
-      window.clearTimeout(resumeListenTimerRef.current)
-      resumeListenTimerRef.current = null
-    }
-  }
-
   const setConversationActiveBoth = (value) => {
     conversationActiveRef.current = value
     setConversationActive(value)
@@ -157,21 +142,6 @@ function App() {
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => {})
       audioContextRef.current = null
-    }
-  }
-
-  const clearVadNoSpeechTimer = () => {
-    if (vadNoSpeechTimerRef.current) {
-      window.clearTimeout(vadNoSpeechTimerRef.current)
-      vadNoSpeechTimerRef.current = null
-    }
-  }
-
-  const destroyVad = () => {
-    clearVadNoSpeechTimer()
-    if (vadRef.current) {
-      vadRef.current.destroy().catch(() => {})
-      vadRef.current = null
     }
   }
 
@@ -274,8 +244,6 @@ function App() {
   useEffect(
     () => () => {
       clearRecordingTimeout()
-      clearResumeListenTimer()
-      destroyVad()
       activeSpeechRef.current?.cleanup({ abortRequest: true, stopAudio: true })
       mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop())
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
@@ -496,7 +464,6 @@ function App() {
         const discard = discardRecordingRef.current
         discardRecordingRef.current = false
         clearRecordingTimeout()
-        destroyVad()
         setIsRecording(false)
         setRecordingMode(null)
         recordingModeRef.current = null
@@ -530,45 +497,8 @@ function App() {
         }
       }, MAX_RECORDING_SECONDS * 1000)
       setIsRecording(true)
-
-      if (mode === 'send') {
-        vadNoSpeechTimerRef.current = window.setTimeout(() => {
-          vadNoSpeechTimerRef.current = null
-          if (recorder.state === 'recording') {
-            discardRecordingRef.current = true
-            setConversationActiveBoth(false)
-            recorder.stop()
-          }
-        }, VAD_NO_SPEECH_TIMEOUT_MS)
-
-        MicVAD.new({
-          baseAssetPath: '/vad/',
-          onnxWASMBasePath: '/vad/',
-          positiveSpeechThreshold: VAD_SPEECH_THRESHOLD,
-          negativeSpeechThreshold: VAD_SPEECH_THRESHOLD - 0.05,
-          redemptionMs: VAD_SILENCE_MS,
-          getStream: async () => stream,
-          pauseStream: async () => {},
-          onSpeechStart: () => {
-            clearVadNoSpeechTimer()
-          },
-          onSpeechEnd: () => {
-            if (recorder.state === 'recording') {
-              recorder.stop()
-            }
-          },
-          startOnLoad: true,
-        }).then((vadInstance) => {
-          if (recorder.state !== 'recording') {
-            vadInstance.destroy().catch(() => {})
-            return
-          }
-          vadRef.current = vadInstance
-        }).catch(() => {})
-      }
     } catch {
       clearRecordingTimeout()
-      destroyVad()
       setIsRecording(false)
       setRecordingMode(null)
       recordingModeRef.current = null
@@ -775,14 +705,8 @@ function App() {
           }
         }
         cleanupSpeakMessage()
-        // Conversation loop: when a spoken reply finishes naturally,
-        // go straight back to listening.
-        if (conversationActiveRef.current && autoSendVoiceRef.current) {
-          clearResumeListenTimer()
-          resumeListenTimerRef.current = window.setTimeout(() => {
-            handleToggleRecording('send')
-          }, RESUME_LISTEN_DELAY_MS)
-        }
+        setConversationActiveBoth(false)
+        markInteraction()
       }
 
       audio.addEventListener('ended', handleNaturalEnd, { once: true })
@@ -846,7 +770,6 @@ function App() {
   // ── interaction handlers ──
   const endConversation = useCallback(() => {
     setConversationActiveBoth(false)
-    clearResumeListenTimer()
     stopActiveSpeech()
     cancelRecording()
   }, [isRecording]) // eslint-disable-line react-hooks/exhaustive-deps
