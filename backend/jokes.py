@@ -3,8 +3,6 @@ import random
 from collections import deque
 from pathlib import Path
 
-from config import JOKE_INTROS
-
 _JOKES_PATH = Path(__file__).parent / "data" / "dad_jokes.json"
 
 _jokes: list[dict] = []
@@ -48,9 +46,8 @@ def get_random_joke() -> dict | None:
 
 def format_explicit_joke(joke: dict) -> str:
     """Return a pre-formatted SCRAP-voice reply; no LLM needed."""
-    intro = random.choice(JOKE_INTROS)
     body = f"{joke['setup']} {joke['punchline']}"
-    return f"{intro} {body} :D" if intro else f"{body} :D"
+    return f"{body} :D"
 
 
 def build_explicit_joke_response(joke: dict) -> dict:

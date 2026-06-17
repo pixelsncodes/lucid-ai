@@ -17,16 +17,6 @@ PLANNER_MODE = os.getenv("PLANNER_MODE", "follow_up")
 JOKE_RANDOM_PROBABILITY = 0.08   # 8% chance of a random joke per no-KB turn
 JOKE_COOLDOWN_TURNS = 3          # minimum assistant turns between random jokes
 
-# Intro lines for direct-serve (explicit-trigger) jokes. "" = delivered cold.
-JOKE_INTROS = [
-    "Pulled this from the archives:",
-    "Found this in the wreckage:",
-    "My humor module insists:",
-    "Salvaged from before the collapse:",
-    "Against my better judgment:",
-    "",
-]
-
 TTS_MODEL_PATH = "models/piper/en_US-lessac-medium.onnx"
 TTS_MAX_TEXT_LENGTH = 2000
 # piper 1.4.2 builds its inter-sentence silence as int(sample_rate * seconds * 2)
