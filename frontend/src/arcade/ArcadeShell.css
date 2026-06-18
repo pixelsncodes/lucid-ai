@@ -72,3 +72,87 @@
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* ── Pause overlay ─────────────────────────────────────────── */
+
+.arcade-play-wrap {
+  position: relative;
+  display: inline-flex;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.arcade-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 5, 7, 0.72);
+}
+
+.arcade-overlay__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 28px 32px;
+  background: var(--s1);
+  border: 1px solid var(--b2);
+  border-radius: var(--r);
+  min-width: 200px;
+}
+
+.arcade-overlay__taunt {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--t2);
+  text-align: center;
+}
+
+.arcade-overlay__buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.arcade-overlay__btn {
+  width: 100%;
+  height: 36px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  color: var(--t2);
+  background: var(--s2);
+  border: 1px solid var(--b1);
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.arcade-overlay__btn:hover {
+  color: var(--t1);
+  border-color: var(--b3);
+  background: var(--s3);
+}
+
+.arcade-overlay__btn:focus-visible {
+  outline: 1px solid var(--t2);
+  outline-offset: 2px;
+}
+
+.arcade-overlay__btn--exit {
+  color: var(--t3);
+  background: transparent;
+  border-color: transparent;
+  margin-top: 4px;
+}
+
+.arcade-overlay__btn--exit:hover {
+  color: var(--err);
+  background: transparent;
+  border-color: transparent;
+}
