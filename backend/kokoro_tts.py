@@ -1,9 +1,12 @@
 import io
+import re
 import wave
 from pathlib import Path
 from threading import Lock
 
 import numpy as np
+
+_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.?!])\s+')
 
 KOKORO_MODEL_RELATIVE_PATH = "models/kokoro/kokoro-v1.0.onnx"
 KOKORO_VOICES_RELATIVE_PATH = "models/kokoro/voices-v1.0.bin"
@@ -50,10 +53,31 @@ def synthesize_wav_bytes(
     text: str,
     voice: str,
     speed: float = 1.0,
+    sentence_silence: float = 0.0,
 ) -> bytes:
     kokoro = _get_kokoro(base_dir)
-    samples, sample_rate = kokoro.create(text, voice=voice, speed=speed, lang="en-us")
-    samples = np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
+
+    sentences = (
+        [s for s in _SENTENCE_SPLIT_RE.split(text.strip()) if s.strip()]
+        if sentence_silence > 0
+        else []
+    )
+
+    if len(sentences) > 1:
+        parts = []
+        sample_rate = None
+        for i, sentence in enumerate(sentences):
+            s, sr = kokoro.create(sentence, voice=voice, speed=speed, lang="en-us")
+            if sample_rate is None:
+                sample_rate = sr
+            parts.append(np.asarray(s, dtype=np.float32))
+            if i < len(sentences) - 1:
+                parts.append(np.zeros(int(sentence_silence * sr), dtype=np.float32))
+        samples = np.clip(np.concatenate(parts), -1.0, 1.0)
+    else:
+        samples, sample_rate = kokoro.create(text, voice=voice, speed=speed, lang="en-us")
+        samples = np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
+
     pcm = (samples * 32767.0).astype(np.int16)
 
     buffer = io.BytesIO()

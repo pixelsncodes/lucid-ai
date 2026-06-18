@@ -1814,6 +1814,7 @@ def text_to_speech(request: TTSRequest):
                 request.text,
                 voice["kokoro_voice"],
                 speed=rate,
+                sentence_silence=TTS_SENTENCE_SILENCE_SECONDS,
             )
         except Exception as error:
             raise HTTPException(
