@@ -7,6 +7,7 @@ import ChatBar from './components/ChatBar'
 import ChatLog from './components/ChatLog'
 import SettingsDrawer from './components/SettingsDrawer'
 import { GearIcon } from './components/Icons'
+import ArcadeShell from './arcade/ArcadeShell'
 
 const DEFAULT_TEMPERATURE = 0.7
 const DEFAULT_NUM_CTX = 4096
@@ -86,6 +87,7 @@ function App() {
   const [uiMode, setUiMode] = useState('voice') // 'voice' | 'chat'
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [conversationActive, setConversationActive] = useState(false)
+  const [arcadeOpen, setArcadeOpen] = useState(false)
   const [analyser, setAnalyser] = useState(null)
   const [replyFace, setReplyFace] = useState(null) // { face, id }
   const [isLaughing, setIsLaughing] = useState(false)
@@ -102,6 +104,7 @@ function App() {
   const autoSpeakRef = useRef(true)
   const autoSendVoiceRef = useRef(true)
   const conversationActiveRef = useRef(false)
+  const arcadeOpenRef = useRef(false)
   const nextChatMessageIdRef = useRef(1)
   const autoSpokenMessageIdsRef = useRef(new Set())
   const activeSpeechRef = useRef(null)
@@ -135,6 +138,11 @@ function App() {
   const setConversationActiveBoth = (value) => {
     conversationActiveRef.current = value
     setConversationActive(value)
+  }
+
+  const setArcadeOpenBoth = (value) => {
+    arcadeOpenRef.current = value
+    setArcadeOpen(value)
   }
 
   const teardownAnalyser = () => {
@@ -272,6 +280,21 @@ function App() {
     { allowDuringTranscribe = false, allowDuringRecording = false } = {},
   ) => {
     const trimmedMessage = text.trim()
+
+    const lc = trimmedMessage.toLowerCase()
+    if (
+      lc === '/arcade' ||
+      lc === 'open the arcade' ||
+      lc === "let's play a game" ||
+      lc === 'play a game'
+    ) {
+      endConversation()
+      setUiMode('voice')
+      setArcadeOpenBoth(true)
+      setMessage('')
+      return true
+    }
+
     const trimmedModel = selectedModel.trim()
     const safeTemperature = clampFiniteNumber(
       temperature,
@@ -777,6 +800,7 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === 'Escape' && !settingsOpen) {
+        if (arcadeOpenRef.current) return
         endConversation()
       }
     }
@@ -898,45 +922,59 @@ function App() {
       </header>
 
       <main className="stage">
-        <MatrixStage
-          status={status}
-          statusDetail={statusDetail}
-          analyser={analyser}
-          replyFace={replyFace}
-          laughing={isLaughing}
-          hasError={Boolean(voiceError)}
-          lastInteraction={lastInteraction}
-          onPress={handleMatrixPress}
-          pressLabel={pressLabel}
-          subtitleWindow={subtitleWindow}
-        />
-        {conversationActive && status !== 'idle' ? (
-          <button type="button" className="end-conversation" onClick={endConversation}>
-            end conversation · esc
-          </button>
-        ) : null}
+        {arcadeOpen ? (
+          <ArcadeShell
+            onExit={() => {
+              setArcadeOpenBoth(false)
+              markInteraction()
+            }}
+            onEvent={() => {}}
+          />
+        ) : (
+          <>
+            <MatrixStage
+              status={status}
+              statusDetail={statusDetail}
+              analyser={analyser}
+              replyFace={replyFace}
+              laughing={isLaughing}
+              hasError={Boolean(voiceError)}
+              lastInteraction={lastInteraction}
+              onPress={handleMatrixPress}
+              pressLabel={pressLabel}
+              subtitleWindow={subtitleWindow}
+            />
+            {conversationActive && status !== 'idle' ? (
+              <button type="button" className="end-conversation" onClick={endConversation}>
+                end conversation · esc
+              </button>
+            ) : null}
+          </>
+        )}
       </main>
 
-      <footer className="dock">
-        {uiMode === 'chat' ? (
-          <ChatLog
-            messages={chatMessages}
-            onSpeak={handleSpeakMessage}
-            speakingIndex={speakingMessageIndex}
+      {!arcadeOpen && (
+        <footer className="dock">
+          {uiMode === 'chat' ? (
+            <ChatLog
+              messages={chatMessages}
+              onSpeak={handleSpeakMessage}
+              speakingIndex={speakingMessageIndex}
+            />
+          ) : null}
+          <ChatBar
+            message={message}
+            onMessageChange={handleMessageChange}
+            onSend={handleSendTyped}
+            onDictate={handleDictate}
+            onFocusInput={handleFocusInput}
+            isRecordingDraft={isRecording && recordingMode === 'draft'}
+            isTranscribing={isTranscribing}
+            isSending={isSending}
+            canSend={canSend}
           />
-        ) : null}
-        <ChatBar
-          message={message}
-          onMessageChange={handleMessageChange}
-          onSend={handleSendTyped}
-          onDictate={handleDictate}
-          onFocusInput={handleFocusInput}
-          isRecordingDraft={isRecording && recordingMode === 'draft'}
-          isTranscribing={isTranscribing}
-          isSending={isSending}
-          canSend={canSend}
-        />
-      </footer>
+        </footer>
+      )}
 
       <SettingsDrawer
         open={settingsOpen}

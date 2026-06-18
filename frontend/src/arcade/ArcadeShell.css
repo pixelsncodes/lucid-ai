@@ -1,0 +1,74 @@
+.arcade-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  width: min(100%, 640px);
+  padding: 0 4px;
+}
+
+.arcade-shell__tagline {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: var(--t3);
+}
+
+.arcade-shell__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+.arcade-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 12px;
+  background: var(--s1);
+  border: 1px solid var(--b1);
+  border-radius: var(--r);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.arcade-card:hover,
+.arcade-card:focus-visible {
+  border-color: var(--b3);
+  background: var(--s2);
+  outline: none;
+}
+
+.arcade-card__num {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  color: var(--t4);
+}
+
+.arcade-card__name {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--t1);
+  text-transform: uppercase;
+}
+
+.arcade-card__help {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  line-height: 1.45;
+  color: var(--t3);
+}
+
+@media (max-width: 480px) {
+  .arcade-shell__grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

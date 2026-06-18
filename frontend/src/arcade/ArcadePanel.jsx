@@ -5,15 +5,20 @@ import { createConsole } from './gameConsole'
 import { GAMES, findGameIndex } from './registry'
 
 const ArcadePanel = forwardRef(function ArcadePanel(
-  { initialIndex = 0, initialGameId, onEvent, onGameChange },
+  { initialIndex = 0, initialGameId, onEvent, onGameChange, enableCycle = true, onEscape },
   ref,
 ) {
-  const canvasRef = useRef(null)
-  const arenaRef  = useRef(null)
-  const consRef   = useRef(null)
-  const gameRef   = useRef(null)
-  const idxRef    = useRef(0)
-  const launchRef = useRef(null)
+  const canvasRef      = useRef(null)
+  const arenaRef       = useRef(null)
+  const consRef        = useRef(null)
+  const gameRef        = useRef(null)
+  const idxRef         = useRef(0)
+  const launchRef      = useRef(null)
+  const enableCycleRef = useRef(enableCycle)
+  const onEscapeRef    = useRef(onEscape)
+
+  enableCycleRef.current = enableCycle
+  onEscapeRef.current    = onEscape
 
   const [gameMeta, setGameMeta] = useState(null)
 
@@ -43,6 +48,8 @@ const ArcadePanel = forwardRef(function ArcadePanel(
     next: () => launchRef.current(idxRef.current + 1),
     prev: () => launchRef.current(idxRef.current - 1),
     getActiveMeta: () => gameRef.current?.meta ?? null,
+    pause:  () => consRef.current?.pause(),
+    resume: () => consRef.current?.resume(),
   }), [])
 
   useEffect(() => {
@@ -61,13 +68,18 @@ const ArcadePanel = forwardRef(function ArcadePanel(
       const prevent = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ']
       if (prevent.includes(e.key)) e.preventDefault()
 
-      if (e.type === 'keydown' && e.key === 'Tab') {
+      if (e.type === 'keydown' && e.key === 'Escape' && onEscapeRef.current) {
+        onEscapeRef.current()
+        return
+      }
+
+      if (e.type === 'keydown' && e.key === 'Tab' && enableCycleRef.current) {
         e.preventDefault()
         launchRef.current(idxRef.current + (e.shiftKey ? -1 : 1))
         return
       }
 
-      if (e.type === 'keydown' && /^[1-9]$/.test(e.key)) {
+      if (e.type === 'keydown' && /^[1-9]$/.test(e.key) && enableCycleRef.current) {
         launchRef.current(parseInt(e.key) - 1)
         return
       }
