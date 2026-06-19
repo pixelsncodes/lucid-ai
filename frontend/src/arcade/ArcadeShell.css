@@ -156,3 +156,40 @@
   background: transparent;
   border-color: transparent;
 }
+
+/* ── In-game reaction overlay ──────────────────────────────── */
+
+.arcade-reaction {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--t2);
+  background: rgba(5, 5, 7, 0.55);
+  border: 1px solid var(--b1);
+  border-radius: var(--r);
+  padding: 5px 12px;
+  white-space: nowrap;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 400ms ease;
+  z-index: 10;
+}
+
+.arcade-reaction--terminal {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, calc(-50% - 60px));
+  font-size: 0.75rem;
+  color: var(--t1);
+  background: rgba(5, 5, 7, 0.72);
+  border-color: var(--b2);
+  padding: 8px 18px;
+  text-align: center;
+  white-space: normal;
+}
